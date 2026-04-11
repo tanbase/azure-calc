@@ -55,7 +55,8 @@ export function usePricing(): UsePricingReturn {
   const loadIndex = useCallback(async (): Promise<PricingIndex | null> => {
     if (indexRef.current) return indexRef.current;
     try {
-      const res = await fetch('/pricing/index.json');
+      const baseUrl = import.meta.env.BASE_URL;
+      const res = await fetch(`${baseUrl}pricing/index.json`);
       if (!res.ok) throw new Error(`Failed to load pricing index (${res.status})`);
       const index: PricingIndex = await res.json();
       indexRef.current = index;
@@ -81,7 +82,8 @@ export function usePricing(): UsePricingReturn {
     }
 
     try {
-      const res = await fetch(`/pricing/${region}.json`, { signal });
+      const baseUrl = import.meta.env.BASE_URL;
+      const res = await fetch(`${baseUrl}pricing/${region}.json`, { signal });
       if (!res.ok) throw new Error(`Failed to load pricing for ${region} (${res.status})`);
       const data = await res.json();
       const records = data.records || [];
