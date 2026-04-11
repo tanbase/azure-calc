@@ -1,0 +1,40 @@
+name: Refresh Pricing Data
+
+on:
+  schedule:
+    - cron: '0 2 * * 1' # Every Monday at 2:00 AM UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Refresh pricing data
+        run: node scripts/refresh-pricing.js
+
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add public/pricing/ public/pricing.json
+          if git diff --staged --quiet; then
+            echo "No pricing changes detected"
+          else
+            git commit -m "chore: refresh pricing data ($(date +%Y-%m-%d))"
+            git push
+          fi
