@@ -1,0 +1,124 @@
+// ============================================================
+// Azure VM Pricing Calculator - CSV Exporter
+// ============================================================
+
+import type { VMEntry, SKULineItem, VMExportRow, SKUExportRow } from '../types';
+
+/**
+ * Convert VM entries to CSV string
+ */
+export function exportVMTableToCSV(vms: VMEntry[]): string {
+  const headers: (keyof VMExportRow)[] = [
+    'VM Name',
+    'VM Family',
+    'vCPU',
+    'Memory GB',
+    'VM SKU',
+    'Disk Type',
+    'Disk Size GB',
+    'Disk SKU',
+    'OS',
+    'SQL',
+    'Backup',
+    'Monitoring',
+    'ASR (Replication)',
+    'Pricing Model',
+    'Monthly Cost',
+  ];
+
+  const rows = vms.map((vm) => ({
+    'VM Name': vm.name,
+    'VM Family': vm.vmFamily,
+    vCPU: vm.vcpu,
+    'Memory GB': vm.memoryGB,
+    'VM SKU': vm.selectedVMSKU || '-',
+    'Disk Type': vm.diskType,
+    'Disk Size GB': vm.diskSizeGB,
+    'Disk SKU': vm.selectedDiskSKU || '-',
+    OS: vm.os,
+    SQL: vm.sql,
+    Backup: vm.backup,
+    Monitoring: vm.monitoring ? 'On' : 'Off',
+    'ASR (Replication)': vm.asr ? 'On' : 'Off',
+    'Pricing Model': vm.pricingModel,
+    'Monthly Cost': vm.monthlyCost,
+  }));
+
+  return buildCSV(headers, rows);
+}
+
+/**
+ * Convert SKU line items to CSV string
+ */
+export function exportSKUToCSV(lineItems: SKULineItem[]): string {
+  const headers: (keyof SKUExportRow)[] = [
+    'SKU ID',
+    'Product Name',
+    'Service',
+    'Unit Price',
+    'Quantity',
+    'Line Total',
+    'VM Name',
+    'Meter Name',
+    'Unit of Measure',
+  ];
+
+  const rows = lineItems.map((item) => ({
+    'SKU ID': item.skuId,
+    'Product Name': item.productName,
+    Service: item.serviceName,
+    'Unit Price': item.unitPrice,
+    Quantity: item.quantity,
+    'Line Total': item.lineTotal,
+    'VM Name': item.vmName,
+    'Meter Name': item.meterName,
+    'Unit of Measure': item.unitOfMeasure,
+  }));
+
+  return buildCSV(headers, rows);
+}
+
+/**
+ * Build CSV string from headers and rows
+ */
+function buildCSV<T extends Record<string, unknown>>(
+  headers: string[],
+  rows: T[],
+): string {
+  const escape = (value: unknown): string => {
+    const str = String(value ?? '');
+    // CSV injection prevention: prefix values that start with formula characters
+    // Excel/Google Sheets will execute formulas starting with =, +, -, @
+    const needsFormulaPrefix = str.startsWith('=') || str.startsWith('+') || str.startsWith('-') || str.startsWith('@');
+    const safeStr = needsFormulaPrefix ? `'${str}` : str;
+    if (safeStr.includes(',') || safeStr.includes('"') || safeStr.includes('\n')) {
+      return `"${safeStr.replace(/"/g, '""')}"`;
+    }
+    return safeStr;
+  };
+
+  const lines = [headers.join(',')];
+
+  for (const row of rows) {
+    const values = headers.map((h) => escape(row[h]));
+    lines.push(values.join(','));
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Trigger a file download in the browser
+ */
+export function downloadCSV(csvContent: string, filename: string): void {
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
