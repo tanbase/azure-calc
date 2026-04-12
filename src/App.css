@@ -1024,15 +1024,19 @@ body {
 }
 
 .summary-cards-row {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 
-/* Row 1: overview cards */
-.summary-cards-row:first-of-type > .summary-card {
-  flex: 1 1 0;
-  min-width: 215px;
+/* Row 1: overview cards - 4 columns */
+.summary-cards-row:first-of-type {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+/* Row 2: breakdown cards - 6 columns */
+.summary-cards-row:last-of-type {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 
 .summary-card {
@@ -1144,8 +1148,6 @@ body {
 
 /* Row 2: Breakdown cards with icons */
 .summary-card-breakdown {
-  flex: 1 1 0;
-  min-width: 180px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1452,14 +1454,15 @@ body {
   }
 }
 
-@media (max-width: 480px) {
+@media (max-width: 800px) {
   .summary-cards {
     padding: 8px 12px 4px;
   }
 
-  .summary-card,
-  .summary-card-breakdown {
-    flex: 1 1 calc(50% - 8px);
+  .summary-cards-row,
+  .summary-cards-row:first-of-type,
+  .summary-cards-row:last-of-type {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .vm-card-layout {
