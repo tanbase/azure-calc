@@ -67,7 +67,8 @@ export type BackupOption =
   | 'Short-term (34 days)'
   | 'Short + Long-term (34d/5w/12m/7y)';
 export type PricingModel = 'PAYG' | '1-year SP (~26% off)' | '3-year SP (~48% off)' | '1-year RI (~41% off)' | '3-year RI (~63% off)';
-export type VMFamily = 'Auto' | 'General Purpose (D-series)' | 'Compute Optimized (F-series)' | 'Memory Optimized (E-series)' | 'Burstable (B-series)';
+export type VMFamily = 'Auto' | 'General Purpose (D-series)' | 'Compute Optimized (F-series)' | 'Memory Optimized (E-series)' | 'Burstable (B-series)' | 'SQL MI - General Purpose' | 'SQL MI - Business Critical';
+export type SQLMIRole = 'Primary' | 'Replica';
 
 export interface VMEntry {
   id: string;
@@ -86,6 +87,7 @@ export interface VMEntry {
   monthlyCost: number;
   selectedVMSKU: string; // Display only
   selectedDiskSKU: string; // Display only
+  sqlMIRole: SQLMIRole; // SQL MI role: Primary (full price) or Replica (~25% discount, SQL license covered)
 }
 
 // --- SKU Breakdown Types ---

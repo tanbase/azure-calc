@@ -209,6 +209,13 @@ async function fetchServicePricing() {
   console.log(`    Got ${monitorRecords.length} records`);
   allRecords.push(...monitorRecords);
 
+  // Log Analytics - Analytics Logs ingestion + retention for SQL MI monitoring
+  console.log('  Fetching Log Analytics pricing...');
+  const logAnalyticsUrl = `${AZURE_PRICING_API}?$filter=serviceName eq 'Log Analytics' and type eq 'Consumption'`;
+  const logAnalyticsRecords = await fetchPricingWithPagination(logAnalyticsUrl);
+  console.log(`    Got ${logAnalyticsRecords.length} records`);
+  allRecords.push(...logAnalyticsRecords);
+
   return allRecords;
 }
 
@@ -306,8 +313,98 @@ async function fetchLicensingPricing() {
 }
 
 // ============================================================
-// Filter and optimize
+// Fetch SQL Managed Instance pricing from Azure Retail API.
+// SQL MI uses per-vCore hourly pricing (not bundle SKUs like VMs).
+// Fetches General Purpose Gen5 and Business Critical Gen5 compute + storage.
 // ============================================================
+
+async function fetchSQLMIPricing() {
+  console.log('  Fetching SQL Managed Instance pricing...');
+  const url = `${AZURE_PRICING_API}?$filter=serviceName eq 'SQL Managed Instance' and type eq 'Consumption'`;
+  const allRecords = await fetchPricingWithPagination(url);
+  console.log(`    Got ${allRecords.length} SQL MI records`);
+  return allRecords;
+}
+
+// ============================================================
+// Filter SQL MI records into the OptimizedPricingRecord format.
+// We keep:
+// - GP Gen5 Compute: meterName='vCore', skuName='1 vCore' → per-vCore/hr
+// - BC Gen5 Compute: meterName='vCore', skuName='1 vCore' → per-vCore/hr
+// - GP Storage: meterName='General Purpose Data Stored' → per GB/mo
+// - BC Storage: meterName='Business Critical Data Stored' → per GB/mo
+// - PITR Backup (LRS): productName includes 'PITR Backup', meterName='LRS Data Stored'
+// - LTR Backup (LRS): productName includes 'LTR Backup', meterName='LTR Backup LRS Data Stored'
+// We normalize productName to simple labels for easy lookup.
+// ============================================================
+
+function filterAndOptimizeSQLMIRecords(records) {
+  const optimized = [];
+  const seen = new Set();
+
+  for (const record of records) {
+    const productName = record.productName || '';
+    const meterName = record.meterName || '';
+    const skuName = record.skuName || '';
+    const region = record.armRegionName || '';
+    const price = record.retailPrice || 0;
+
+    const isPerVCoreUnit = meterName === 'vCore' && skuName === '1 vCore';
+    const isGPStorageUnit = meterName === 'General Purpose Data Stored';
+    const isBCStorageUnit = meterName === 'Business Critical Data Stored';
+    const isPITRBackup = productName.includes('PITR Backup Storage') && meterName === 'LRS Data Stored';
+    const isLTRBackup = productName.includes('LTR Backup Storage') && meterName === 'LTR Backup LRS Data Stored';
+
+    if (!isPerVCoreUnit && !isGPStorageUnit && !isBCStorageUnit && !isPITRBackup && !isLTRBackup) continue;
+
+    let serviceName = 'SQL Managed Instance';
+    let normalizedProductName;
+    let meterLabel;
+
+    if (productName.includes('General Purpose - Compute Gen5') && isPerVCoreUnit) {
+      normalizedProductName = 'General Purpose Gen5';
+      meterLabel = 'vCore per Hour';
+    } else if (productName.includes('Business Critical - Compute Gen5') && isPerVCoreUnit) {
+      normalizedProductName = 'Business Critical Gen5';
+      meterLabel = 'vCore per Hour';
+    } else if (productName.includes('General Purpose') && productName.includes('Storage') && meterName === 'General Purpose Data Stored') {
+      if (meterName.includes('Zone Redundancy')) continue;
+      normalizedProductName = 'General Purpose Storage';
+      meterLabel = 'GB per Month';
+    } else if (productName.includes('Business Critical') && productName.includes('Storage') && meterName === 'Business Critical Data Stored') {
+      if (meterName.includes('Zone Redundancy')) continue;
+      normalizedProductName = 'Business Critical Storage';
+      meterLabel = 'GB per Month';
+    } else if (isPITRBackup) {
+      normalizedProductName = 'PITR Backup LRS';
+      meterLabel = 'GB per Month';
+    } else if (isLTRBackup) {
+      normalizedProductName = 'LTR Backup LRS';
+      meterLabel = 'GB per Month';
+    } else {
+      continue;
+    }
+
+    const dedupKey = `${normalizedProductName}|${region}|${meterLabel}`;
+    if (seen.has(dedupKey)) continue;
+    seen.add(dedupKey);
+
+    optimized.push({
+      skuId: `sqlmi-${normalizedProductName.replace(/\s/g, '-').toLowerCase()}-${region}`,
+      productName: normalizedProductName,
+      serviceName,
+      meterName: meterLabel,
+      region,
+      unitOfMeasure: meterLabel === 'GB per Month' ? '1 GB/Month' : '1 Hour',
+      unitPrice: price,
+      reservationTerm: null,
+      skuName: normalizedProductName,
+      armSkuName: normalizedProductName,
+    });
+  }
+
+  return optimized;
+}
 
 function filterAndOptimizeRecords(records) {
   const optimized = [];
@@ -342,6 +439,13 @@ function filterAndOptimizeRecords(records) {
       const isArchiveRate =
         record.skuName === 'Archive' && record.meterName === 'LRS Data Stored';
       if (!isProtectedInstance && !isStorageRate && !isArchiveRate) continue;
+    }
+
+    // Log Analytics — keep Analytics Logs ingestion and retention
+    if (record.serviceName === 'Log Analytics') {
+      const isIngestion = record.meterName === 'Analytics Logs Data Ingestion' && record.retailPrice > 0;
+      const isRetention = record.meterName === 'Analytics Logs Data Retention';
+      if (!isIngestion && !isRetention) continue;
     }
 
     const optimizedRecord = {
@@ -414,15 +518,22 @@ async function refreshPricing() {
   const serviceRecords = await fetchServicePricing();
   console.log(`  ✅ Service pricing: ${serviceRecords.length} records\n`);
 
-  // 4. Fetch SQL Server + OS licensing pricing
+  // 4. Fetch SQL Managed Instance pricing
+  console.log('📡 Fetching SQL Managed Instance pricing...');
+  const sqlMIRecords = await fetchSQLMIPricing();
+  console.log(`  ✅ SQL MI pricing: ${sqlMIRecords.length} raw records`);
+  const sqlMIOptimized = filterAndOptimizeSQLMIRecords(sqlMIRecords);
+  console.log(`  ✅ SQL MI pricing: ${sqlMIOptimized.length} optimized records\n`);
+
+  // 5. Fetch SQL Server + OS licensing pricing
   console.log('📡 Fetching SQL Server + OS licensing...');
   const licensing = await fetchLicensingPricing();
   console.log('');
 
-  // 5. Fetch exchange rates
+  // 6. Fetch exchange rates
   const exchangeRates = await fetchExchangeRates();
 
-  // 6. Combine and filter
+  // 7. Combine and filter VM/disk/service records
   const allRecords = [...vmRecords, ...diskRecords, ...serviceRecords];
   console.log(`\n📊 Processing ${allRecords.length} raw records...`);
   const optimized = filterAndOptimizeRecords(allRecords);
@@ -538,8 +649,8 @@ async function refreshPricing() {
     });
   }
 
-  const allOptimized = [...optimized, ...licensingRecords, ...asrRecords];
-  console.log(`✨ With SQL + OS + ASR pricing: ${allOptimized.length} records`);
+  const allOptimized = [...optimized, ...licensingRecords, ...asrRecords, ...sqlMIOptimized];
+  console.log(`✨ With SQL MI + SQL + OS + ASR pricing: ${allOptimized.length} records`);
 
   // 9. Group by region and filter to commercial regions
   const allRegions = {};

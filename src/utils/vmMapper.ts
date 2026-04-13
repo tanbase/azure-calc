@@ -3,8 +3,81 @@
 // Maps user-entered vCPU/RAM specs to closest Azure VM size
 // ============================================================
 
-import type { VMFamily, VMSKU } from '../types';
+import type { VMFamily, VMSKU, SQLMIRole } from '../types';
 import { VM_SKUS } from './constants';
+
+// ============================================================
+// SQL MI SKU Definitions
+// SQL Managed Instance has fixed vCore→memory ratio: 4 GB RAM per vCore (Gen5).
+// Available vCore counts for both GP and BC tiers.
+// ============================================================
+
+export const SQL_MI_VCORE_OPTIONS = [4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80];
+export const SQL_MI_MEMORY_PER_VCORE = 4; // GB per vCore for Gen5
+
+export interface SQLMISKU {
+  tier: 'General Purpose' | 'Business Critical';
+  vcores: number;
+  memoryGB: number;
+  skuName: string; // display name
+}
+
+/**
+ * Find the closest SQL MI vCore count for given specs.
+ * Always rounds UP to the nearest available vCore tier.
+ * Family determines whether GP or BC tier is returned.
+ */
+export function findClosestSQLMISKU(
+  vcpu: number,
+  memoryGB: number,
+  _role: SQLMIRole = 'Primary',
+  family: VMFamily = 'SQL MI - General Purpose',
+): SQLMISKU {
+  const memoryPerVCore = SQL_MI_MEMORY_PER_VCORE;
+  const tier = family === 'SQL MI - Business Critical' ? 'Business Critical' : 'General Purpose';
+  const tierAbbr = tier === 'Business Critical' ? 'BC' : 'GP';
+
+  // Calculate minimum vCores needed based on CPU and memory requirements
+  const vcoresForCPU = vcpu;
+  const vcoresForMemory = Math.ceil(memoryGB / memoryPerVCore);
+  const minVcores = Math.max(vcoresForCPU, vcoresForMemory, SQL_MI_VCORE_OPTIONS[0]);
+
+  // Find the smallest vCore option that meets requirements
+  const vcores = SQL_MI_VCORE_OPTIONS.find((v) => v >= minVcores)
+    ?? SQL_MI_VCORE_OPTIONS[SQL_MI_VCORE_OPTIONS.length - 1];
+
+  const memoryGBActual = vcores * memoryPerVCore;
+
+  return {
+    tier,
+    vcores,
+    memoryGB: memoryGBActual,
+    skuName: `SQL MI ${tierAbbr} ${vcores} core`,
+  };
+}
+
+/**
+ * Find the best SQL MI SKU by trying both GP and BC tiers.
+ * Returns the cheaper option based on pricing data.
+ */
+export function findBestSQLMISKU(
+  vcpu: number,
+  memoryGB: number,
+  _role: SQLMIRole = 'Primary',
+): { gp: SQLMISKU; bc: SQLMISKU } {
+  const memoryPerVCore = SQL_MI_MEMORY_PER_VCORE;
+  const vcoresForCPU = vcpu;
+  const vcoresForMemory = Math.ceil(memoryGB / memoryPerVCore);
+  const minVcores = Math.max(vcoresForCPU, vcoresForMemory, SQL_MI_VCORE_OPTIONS[0]);
+  const vcores = SQL_MI_VCORE_OPTIONS.find((v) => v >= minVcores)
+    ?? SQL_MI_VCORE_OPTIONS[SQL_MI_VCORE_OPTIONS.length - 1];
+  const memoryGBActual = vcores * memoryPerVCore;
+
+  return {
+    gp: { tier: 'General Purpose', vcores, memoryGB: memoryGBActual, skuName: `SQL MI GP ${vcores} core` },
+    bc: { tier: 'Business Critical', vcores, memoryGB: memoryGBActual, skuName: `SQL MI BC ${vcores} core` },
+  };
+}
 
 /**
  * Find the closest Azure VM SKU for given specs and family.

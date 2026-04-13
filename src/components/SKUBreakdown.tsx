@@ -50,6 +50,18 @@ export const SKUBreakdown: React.FC<SKUBreakdownProps> = React.memo(({ lineItems
     [currencySymbol],
   );
 
+  // Abbreviate unit of measure for display
+  const abbreviateUnits = React.useCallback((uom: string): string => {
+    return uom
+      .replace(/^1\s+/, '')           // Remove leading "1 "
+      .replace(/\/Month/g, '/mth')    // Month → mth
+      .replace(/\/Hour/g, '/hr')      // Hour → hr
+      .replace(/Pack\/Month/g, 'packs/mth')
+      .replace(/vCore\/Month/g, 'vCores/mth')
+      .replace(/GB\/Month/g, 'GB/mth')
+      .trim();
+  }, []);
+
   const grandTotal = React.useMemo(
     () => lineItems.reduce((s, i) => s + i.lineTotal, 0),
     [lineItems],
@@ -99,6 +111,7 @@ export const SKUBreakdown: React.FC<SKUBreakdownProps> = React.memo(({ lineItems
               <th>SKU</th>
               <th>Product</th>
               <th>Service</th>
+              <th>Units</th>
               <th className="col-right">Unit Price</th>
               <th className="col-right">Qty</th>
               <th className="col-right">Line Total</th>
@@ -123,8 +136,12 @@ export const SKUBreakdown: React.FC<SKUBreakdownProps> = React.memo(({ lineItems
                   >
                     <td className="col-toggle"><span className="expand-icon">{isExpanded ? '▼' : '▶'}</span></td>
                     <td className="vm-name-cell">{vm.name}</td>
-                    <td className="vm-summary-service" colSpan={5}>
-                      {items[0].serviceName}{items.length > 1 ? ` (${items.length} SKUs)` : ''}
+                    <td className="vm-summary-service" colSpan={6}>
+                      {(() => {
+                        const svc = items[0].serviceName;
+                        const displaySvc = svc === 'SQL Managed Instance' ? 'SQL Managed Instance' : svc;
+                        return `${displaySvc}${items.length > 1 ? ` (${items.length} SKUs)` : ''}`;
+                      })()}
                     </td>
                     <td className="total-cell subtotal-value">{fmtTotal(vmTotal)}</td>
                   </tr>
@@ -134,7 +151,8 @@ export const SKUBreakdown: React.FC<SKUBreakdownProps> = React.memo(({ lineItems
                       <td className="indent-cell"></td>
                       <td className="sku-name-cell">{item.meterName}</td>
                       <td className="product-cell">{item.productName}</td>
-                      <td>{item.serviceName}</td>
+                      <td>{item.serviceName === 'SQL Managed Instance' ? 'SQL Managed Instance' : item.serviceName}</td>
+                      <td className="units-cell">{abbreviateUnits(item.unitOfMeasure)}</td>
                       <td className="price-cell">{fmt(item.unitPrice)}</td>
                       <td className="qty-cell">{item.quantity}</td>
                       <td className="total-cell">{fmtTotal(item.lineTotal)}</td>
@@ -146,7 +164,7 @@ export const SKUBreakdown: React.FC<SKUBreakdownProps> = React.memo(({ lineItems
           </tbody>
           <tfoot>
             <tr className="grand-total-row">
-              <td colSpan={7}>Grand Total</td>
+              <td colSpan={8}>Grand Total</td>
               <td className="grand-total-value">{fmtTotal(grandTotal)}</td>
             </tr>
           </tfoot>

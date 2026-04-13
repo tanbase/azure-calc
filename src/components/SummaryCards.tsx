@@ -56,11 +56,9 @@ export const SummaryCards: React.FC<SummaryCardsProps> = React.memo(({
           <div className="card-value">{fmt(totalMonthlyCost * 12)}</div>
         </div>
         <div className="summary-card summary-card-ri">
-          <div className="card-label-row">
-            <span className="card-label">3YR RI ESTIMATE</span>
-            <span className="card-ri-badge">~63% off compute</span>
-          </div>
+          <div className="card-label">3YR RI ESTIMATE</div>
           <div className="card-value">{fmt(threeYearRIMonthly)}</div>
+          <div className="card-subtext">~63% off compute</div>
         </div>
       </div>
 

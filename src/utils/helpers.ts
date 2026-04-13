@@ -32,6 +32,7 @@ export function createVM(name: string = '', overrides: Partial<VMEntry> = {}): V
     monthlyCost: 0,
     selectedVMSKU: '-',
     selectedDiskSKU: '-',
+    sqlMIRole: 'Primary',
     ...overrides,
   };
 }

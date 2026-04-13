@@ -10,6 +10,7 @@ import type {
   BackupOption,
   PricingModel,
   VMFamily,
+  SQLMIRole,
 } from '../types';
 
 // --- Azure Regions ---
@@ -79,6 +80,8 @@ export const VM_FAMILY_OPTIONS: VMFamily[] = [
   'Compute Optimized (F-series)',
   'Memory Optimized (E-series)',
   'Burstable (B-series)',
+  'SQL MI - General Purpose',
+  'SQL MI - Business Critical',
 ];
 
 export const DISK_TYPE_OPTIONS: DiskType[] = ['Premium SSD', 'Standard SSD', 'Standard HDD'];
@@ -98,6 +101,8 @@ export const BACKUP_OPTIONS: BackupOption[] = [
   'Short-term (34 days)',
   'Short + Long-term (34d/5w/12m/7y)',
 ];
+
+export const SQL_MI_ROLE_OPTIONS: SQLMIRole[] = ['Primary', 'Replica'];
 
 export const PRICING_MODEL_OPTIONS: PricingModel[] = [
   'PAYG',

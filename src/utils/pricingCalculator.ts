@@ -8,7 +8,7 @@ import type {
   OptimizedPricingRecord,
   SQLOption,
 } from '../types';
-import { findClosestVMSize, findClosestDiskSKU } from './vmMapper';
+import { findClosestVMSize, findClosestDiskSKU, findClosestSQLMISKU } from './vmMapper';
 
 // ============================================================
 // Savings Plan / Reserved Instance discount mapping
@@ -103,8 +103,25 @@ export function calculateVMCost(
   let selectedVMSKU: string | undefined;
   let selectedDiskSKU: string | undefined;
 
-  // Only calculate compute cost if vCPU and memory are populated (>0)
-  if (vm.vcpu > 0 && vm.memoryGB > 0) {
+  // SQL Managed Instance branch
+  const isSQLMI = vm.vmFamily === 'SQL MI - General Purpose' || vm.vmFamily === 'SQL MI - Business Critical';
+  if (isSQLMI && vm.vcpu > 0 && vm.memoryGB > 0) {
+    const sqlMIResult = calculateSQLMICost(vm, pricingData, azureHybridBenefitSQL);
+    lineItems.push(...sqlMIResult.items);
+    selectedVMSKU = sqlMIResult.selectedVMSKU;
+
+    // Monitoring for SQL MI
+    if (vm.monitoring) {
+      lineItems.push(...calculateSQLMIMonitoringCost(vm, pricingData));
+    }
+
+    // Backup for SQL MI
+    if (vm.backup !== 'No backups') {
+      lineItems.push(...calculateSQLMIBackupCost(vm, pricingData, vm.backup, sqlMIResult));
+    }
+  }
+  // Regular VM branch
+  else if (vm.vcpu > 0 && vm.memoryGB > 0) {
     // 1. Compute cost (includes OS licensing bundled in Azure pricing)
     const computeResult = calculateComputeCost(vm, pricingData, azureHybridBenefitWindows);
     lineItems.push(...computeResult.items);
@@ -122,8 +139,8 @@ export function calculateVMCost(
     }
   }
 
-  // Only calculate disk/ASR/backup costs if disk size > 0
-  if (vm.diskSizeGB > 0) {
+  // Only calculate disk/ASR/backup costs if disk size > 0 (and not SQL MI — SQL MI uses different storage model)
+  if (vm.diskSizeGB > 0 && !isSQLMI) {
     // 3. Disk cost
     const diskResult = calculateDiskCost(vm, pricingData);
     lineItems.push(...diskResult.items);
@@ -462,6 +479,314 @@ function calculateSQLCost(
     meterName: `SQL ${vm.sql} (${billablePacks}x 2-core pack${billablePacks > 1 ? 's' : ''}, ${billableVcpu} vCPU billed)`,
     unitOfMeasure: '1 Pack/Month',
   }];
+}
+
+// ============================================================
+// SQL Managed Instance Cost
+// ============================================================
+// SQL MI uses per-vCore hourly pricing (from Azure Retail API).
+// Storage is billed per GB/month (separate from compute).
+// Replica instances get ~25% compute discount (SQL license covered by primary).
+// Pricing model discounts (RI/SP) are applied as percentage reductions
+// on top of PAYG rates since the API doesn't return RI rates for SQL MI.
+// ============================================================
+
+const SQL_MI_PRICING_MODEL_DISCOUNT: Record<string, number> = {
+  'PAYG': 0,
+  '1-year RI (~41% off)': 0.41,
+  '3-year RI (~63% off)': 0.63,
+};
+
+const SQL_MI_REPLICA_DISCOUNT = 0.25; // 25% off for replica instances
+const SQL_MI_HOURS_PER_MONTH = 730;
+const SQL_MI_FREE_STORAGE_GB = 32; // First 32 GB included free
+
+interface SQLMICalcResult {
+  items: SKULineItem[];
+  selectedVMSKU: string;
+  vcores: number;
+  storageGB: number;
+  memoryGB: number;
+  tier: 'General Purpose' | 'Business Critical';
+  licenseMonthly: number; // License cost (0 if AHB or Replica)
+}
+
+function calculateSQLMICost(
+  vm: VMEntry,
+  pricingData: OptimizedPricingRecord[],
+  azureHybridBenefitSQL: boolean = false,
+): SQLMICalcResult {
+  const items: SKULineItem[] = [];
+  const sqlMI = findClosestSQLMISKU(vm.vcpu, vm.memoryGB, vm.sqlMIRole, vm.vmFamily);
+  const vcores = sqlMI.vcores;
+
+  // Determine tier from family name
+  const useBusinessCritical = vm.vmFamily === 'SQL MI - Business Critical';
+  const computeProductName = useBusinessCritical ? 'Business Critical Gen5' : 'General Purpose Gen5';
+  const storageProductName = useBusinessCritical ? 'Business Critical Storage' : 'General Purpose Storage';
+
+  // Determine discounts
+  const discount = SQL_MI_PRICING_MODEL_DISCOUNT[vm.pricingModel] ?? 0;
+  const isReplica = vm.sqlMIRole === 'Replica';
+
+  // 1. Compute cost: find per-vCore hourly rate
+  const computeRecord = pricingData.find(
+    (r) =>
+      r.serviceName === 'SQL Managed Instance' &&
+      r.productName === computeProductName &&
+      r.meterName === 'vCore per Hour',
+  );
+
+  if (!computeRecord) {
+    return {
+      items: [makePlaceholderItem('compute', vm, sqlMI.skuName, 'Hours')],
+      selectedVMSKU: sqlMI.skuName,
+      vcores,
+      storageGB: 0,
+      memoryGB: 0,
+      tier: useBusinessCritical ? 'Business Critical' : 'General Purpose',
+      licenseMonthly: 0,
+    };
+  }
+
+  const perVCoreHourlyRate = computeRecord.unitPrice;
+  const effectiveRate = isReplica ? perVCoreHourlyRate * (1 - SQL_MI_REPLICA_DISCOUNT) : perVCoreHourlyRate;
+  const finalRate = effectiveRate * (1 - discount);
+  const computeMonthly = Math.round(vcores * finalRate * SQL_MI_HOURS_PER_MONTH * 100) / 100;
+
+  const discountLabel = discount > 0 ? ` (${vm.pricingModel})` : '';
+  const replicaLabel = isReplica ? ' (Replica -25%)' : '';
+  const memoryGB = vcores * 4; // Gen5: 4 GB RAM per vCore
+
+  items.push({
+    skuId: `sqlmi-compute-${computeProductName.replace(/\s/g, '-').toLowerCase()}-${vcores}`,
+    productName: `SQL MI ${computeProductName} - Compute`,
+    serviceName: 'SQL Managed Instance',
+    unitPrice: Math.round(finalRate * SQL_MI_HOURS_PER_MONTH * 10000) / 10000,
+    quantity: vcores,
+    lineTotal: computeMonthly,
+    vmName: vm.name,
+    vmId: vm.id,
+    meterName: `${computeProductName} ${vcores} vCore${discountLabel}${replicaLabel} (${memoryGB} GB Memory)`,
+    unitOfMeasure: '1 vCore/Month',
+  });
+
+  // 2. License cost: separate line item, $0 if AHB enabled or Replica.
+  // SQL MI license = SQL Server Standard rate (~$0.10/vCPU/hr).
+  // Derives from the "SQL Server Standard" record already in pricingData.
+  let licenseMonthly = 0;
+  if (!azureHybridBenefitSQL && !isReplica) {
+    const licenseRecord = pricingData.find(
+      (r) =>
+        r.serviceName === 'SQL Server' &&
+        (r.meterName === 'Standard per vCPU Hour' || r.productName === 'SQL Server Standard'),
+    );
+    // Fall back to SQL Standard hardcoded rate from refresh-pricing.js
+    const licenseRatePerVcpuHour = licenseRecord ? licenseRecord.unitPrice : 0.10;
+    licenseMonthly = Math.round(licenseRatePerVcpuHour * vcores * SQL_MI_HOURS_PER_MONTH * 100) / 100;
+    if (licenseMonthly > 0) {
+      items.push({
+        skuId: `sqlmi-license-${computeProductName.replace(/\s/g, '-').toLowerCase()}`,
+        productName: `SQL MI ${computeProductName} - License`,
+        serviceName: 'SQL Server',
+        unitPrice: Math.round(licenseRatePerVcpuHour * SQL_MI_HOURS_PER_MONTH * 10000) / 10000,
+        quantity: vcores,
+        lineTotal: licenseMonthly,
+        vmName: vm.name,
+        vmId: vm.id,
+        meterName: `SQL Server Standard${discountLabel} (${vcores} vCore)`,
+        unitOfMeasure: '1 vCore/Month',
+      });
+    }
+  }
+
+  // 3. Storage cost: per GB/month, 32 GB increments, first 32 GB free
+  const rawStorageGB = vm.diskSizeGB;
+  // Round up to nearest 32 GB block
+  const storageGB = Math.max(32, Math.ceil(rawStorageGB / 32) * 32);
+  const billableStorageGB = storageGB - SQL_MI_FREE_STORAGE_GB;
+
+  if (billableStorageGB > 0) {
+    const storageRecord = pricingData.find(
+      (r) =>
+        r.serviceName === 'SQL Managed Instance' &&
+        r.productName === storageProductName &&
+        r.meterName === 'GB per Month',
+    );
+
+    if (storageRecord) {
+      const storageMonthly = Math.round(storageRecord.unitPrice * billableStorageGB * 100) / 100;
+      items.push({
+        skuId: `sqlmi-storage-${storageProductName.replace(/\s/g, '-').toLowerCase()}`,
+        productName: `SQL MI ${storageProductName}`,
+        serviceName: 'Storage',
+        unitPrice: storageRecord.unitPrice,
+        quantity: billableStorageGB,
+        lineTotal: storageMonthly,
+        vmName: vm.name,
+        vmId: vm.id,
+        meterName: `${storageProductName} ${billableStorageGB} GB (${storageGB} GB total, 32 GB free)`,
+        unitOfMeasure: '1 GB/Month',
+      });
+    }
+  }
+
+  return {
+    items,
+    selectedVMSKU: sqlMI.skuName,
+    vcores,
+    storageGB,
+    memoryGB,
+    tier: useBusinessCritical ? 'Business Critical' : 'General Purpose',
+    licenseMonthly,
+  };
+}
+
+/**
+ * Backup cost for SQL MI instances.
+ * Based on official Azure SQL MI Backup Storage Rates (per GB per month):
+ * 
+ * | Redundancy | PITR (Excess) | LTR       |
+ * |------------|--------------|-----------|
+ * | LRS        | $0.10/GB     | $0.025/GB |
+ * | ZRS        | $0.10/GB     | $0.025/GB |
+ * | GRS        | $0.20/GB     | $0.05/GB  |
+ * | GZRS       | $0.20/GB     | $0.05/GB  |
+ *
+ * First 100% of database size is free for PITR. Excess PITR is billed.
+ * LTR is billed for the full database size when retention policies are enabled.
+ * 
+ * Source: Azure SQL MI Backup Storage pricing documentation
+ */
+function calculateSQLMIBackupCost(
+  _vm: VMEntry,
+  pricingData: OptimizedPricingRecord[],
+  backupType: string,
+  sqlMIResult: SQLMICalcResult,
+): SKULineItem[] {
+  const items: SKULineItem[] = [];
+  const isLongTerm = backupType.includes('Long-term');
+
+  // Look up backup rates from pricingData (fetched from Azure Retail API).
+  // Falls back to US East rates if not available in the current region's data.
+  const pitrRecord = pricingData.find(
+    (r) => r.productName === 'PITR Backup LRS' && r.meterName === 'GB per Month',
+  );
+  const ltrRecord = pricingData.find(
+    (r) => r.productName === 'LTR Backup LRS' && r.meterName === 'GB per Month',
+  );
+
+  const pitrRatePerGB = pitrRecord ? pitrRecord.unitPrice : 0.10;  // fallback: East US LRS
+  const ltrRatePerGB = ltrRecord ? ltrRecord.unitPrice : 0.025;   // fallback: East US LRS
+
+  // PITR: First 100% of database size is free. We bill based on estimated excess.
+  // Use the allocated backend storage (32 GB blocks), not the raw user input.
+  // Azure backup estimated at 1.5× the allocated frontend storage.
+  const pitrMultiplier = 1.5;
+  const totalBackupGB = Math.round(sqlMIResult.storageGB * pitrMultiplier);
+  const freeBackupGB = sqlMIResult.storageGB; // First 100% is free
+  const excessBackupGB = Math.max(0, totalBackupGB - freeBackupGB);
+
+  if (excessBackupGB > 0) {
+    const pitrCost = Math.round(pitrRatePerGB * excessBackupGB * 100) / 100;
+    items.push({
+      skuId: 'sqlmi-backup-pitr',
+      productName: 'SQL MI - Point-in-Time Restore Backup',
+      serviceName: 'Backup',
+      unitPrice: pitrRatePerGB,
+      quantity: excessBackupGB,
+      lineTotal: pitrCost,
+      vmName: _vm.name,
+      vmId: _vm.id,
+      meterName: `PITR Backup Excess (${excessBackupGB} GB of ${totalBackupGB} GB total)`,
+      unitOfMeasure: 'GB/mth',
+    });
+  }
+
+  if (isLongTerm) {
+    const ltMultiplier = 19.0;
+    const ltBackupGB = Math.round(sqlMIResult.storageGB * ltMultiplier);
+    const ltCost = Math.round(ltrRatePerGB * ltBackupGB * 100) / 100;
+    items.push({
+      skuId: 'sqlmi-backup-longterm',
+      productName: 'SQL MI - Long-Term Retention Backup',
+      serviceName: 'Backup',
+      unitPrice: ltrRatePerGB,
+      quantity: ltBackupGB,
+      lineTotal: ltCost,
+      vmName: _vm.name,
+      vmId: _vm.id,
+      meterName: `LTR Backup (5w + 12m + 7y, ${ltBackupGB} GB @ ${ltMultiplier}× allocated)`,
+      unitOfMeasure: 'GB/mth',
+    });
+  }
+
+  return items;
+}
+
+// ============================================================
+// SQL MI Monitoring Cost
+// SQL MI monitoring uses Log Analytics workspace pricing:
+// - Analytics Logs Data Ingestion: ~$2.30/GB (from API, varies by region)
+// - Analytics Logs Data Retention: ~$0.10/GB/mo (from API, Global rate)
+// Typical 1000 GB instance ingests ~2-5 GB/month of diagnostic logs.
+// We estimate 3.5 GB ingestion/month as a midpoint.
+// ============================================================
+
+const SQL_MI_ESTIMATED_LOG_INGESTION_GB = 3.5; // GB per month, midpoint of 2-5 GB
+
+function calculateSQLMIMonitoringCost(
+  _vm: VMEntry,
+  pricingData: OptimizedPricingRecord[],
+): SKULineItem[] {
+  const items: SKULineItem[] = [];
+
+  // 1. Log ingestion cost: find Analytics Logs Data Ingestion rate from API
+  const ingestionRecord = pricingData.find(
+    (r) =>
+      r.serviceName === 'Log Analytics' &&
+      r.meterName === 'Analytics Logs Data Ingestion' &&
+      r.unitPrice > 0,
+  );
+  const ingestionRate = ingestionRecord ? ingestionRecord.unitPrice : 2.30; // fallback: East US rate
+  const ingestionCost = Math.round(ingestionRate * SQL_MI_ESTIMATED_LOG_INGESTION_GB * 100) / 100;
+
+  items.push({
+    skuId: 'sqlmi-monitoring-ingestion',
+    productName: 'SQL MI Monitoring - Log Analytics Ingestion',
+    serviceName: 'Azure Monitor',
+    unitPrice: ingestionRate,
+    quantity: SQL_MI_ESTIMATED_LOG_INGESTION_GB,
+    lineTotal: ingestionCost,
+    vmName: _vm.name,
+    vmId: _vm.id,
+    meterName: `Analytics Logs Ingestion (${SQL_MI_ESTIMATED_LOG_INGESTION_GB} GB/month est.)`,
+    unitOfMeasure: 'GB/mth',
+  });
+
+  // 2. Log retention cost: find Analytics Logs Data Retention rate (Global)
+  const retentionRecord = pricingData.find(
+    (r) =>
+      r.serviceName === 'Log Analytics' &&
+      r.meterName === 'Analytics Logs Data Retention',
+  );
+  const retentionRate = retentionRecord ? retentionRecord.unitPrice : 0.10; // fallback
+  const retentionCost = Math.round(retentionRate * SQL_MI_ESTIMATED_LOG_INGESTION_GB * 100) / 100;
+
+  items.push({
+    skuId: 'sqlmi-monitoring-retention',
+    productName: 'SQL MI Monitoring - Log Analytics Retention',
+    serviceName: 'Azure Monitor',
+    unitPrice: retentionRate,
+    quantity: SQL_MI_ESTIMATED_LOG_INGESTION_GB,
+    lineTotal: retentionCost,
+    vmName: _vm.name,
+    vmId: _vm.id,
+    meterName: `Analytics Logs Retention (${SQL_MI_ESTIMATED_LOG_INGESTION_GB} GB/mth)`,
+    unitOfMeasure: 'GB/mth',
+  });
+
+  return items;
 }
 
 // ============================================================
