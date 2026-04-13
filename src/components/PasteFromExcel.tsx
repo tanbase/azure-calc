@@ -205,6 +205,10 @@ export const PasteFromExcel: React.FC<PasteFromExcelProps> = React.memo(({ onPas
     setIsFocused(true);
   };
 
+  const handleBlur = () => {
+    setIsFocused(false);
+  };
+
   // Handle container paste event
   const handleContainerPaste = (e: React.ClipboardEvent) => {
     handlePaste(e.nativeEvent);
@@ -214,6 +218,7 @@ export const PasteFromExcel: React.FC<PasteFromExcelProps> = React.memo(({ onPas
     <div
       className={`paste-panel ${isFocused ? 'paste-panel-focused' : ''}`}
       onClick={handleClick}
+      onBlur={handleBlur}
       onPaste={handleContainerPaste}
       tabIndex={0}
       role="button"

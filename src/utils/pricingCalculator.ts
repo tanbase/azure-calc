@@ -374,8 +374,8 @@ function calculateOSLineItem(
 // ============================================================
 // SQL Licensing
 // SQL Server licensing rules:
-// - Licenses sold in 2-core packs (1 pack = 2 vCPU)
-// - Minimum 4 vCPU per VM (2 packs minimum)
+// - Priced per vCPU (no pack-based billing)
+// - Minimum 4 vCPU per VM
 // - SQL AHB removes the SQL surcharge entirely.
 //
 // Rates are read from pricingData (populated by refresh-pricing.js via
@@ -383,8 +383,7 @@ function calculateOSLineItem(
 // Falls back to hardcoded rates if not found in pricing data.
 // ============================================================
 
-const SQL_CORES_PER_PACK = 2;
-const SQL_MIN_PACKS = 2; // Minimum 4 vCPU = 2 packs
+const SQL_MIN_VCPU = 4;
 
 // Fallback rates from Azure Retail Prices API (Virtual Machines Licenses).
 // These match the refresh-pricing.js hardcoded defaults.
@@ -458,26 +457,23 @@ function calculateSQLCost(
   // Read SQL rates from pricing data (with fallback to hardcoded rates)
   const sqlRates = getSQLRatesFromPricingData(pricingData);
   const ratePerVcpuMonth = sqlRates[vm.sql] || 0;
-  const costPerPack = ratePerVcpuMonth * SQL_CORES_PER_PACK;
 
-  // Calculate packs needed: ceil(resolvedVcpu / 2), minimum 2 packs
-  const packsNeeded = Math.ceil(resolvedVcpu / SQL_CORES_PER_PACK);
-  const billablePacks = Math.max(packsNeeded, SQL_MIN_PACKS);
+  // Apply minimum 4 vCPU billing
+  const billableVcpu = Math.max(resolvedVcpu, SQL_MIN_VCPU);
 
-  const lineTotal = Math.round(costPerPack * billablePacks * 100) / 100;
-  const billableVcpu = billablePacks * SQL_CORES_PER_PACK;
+  const lineTotal = Math.round(ratePerVcpuMonth * billableVcpu * 100) / 100;
 
   return [{
     skuId: `sql-${vm.sql.toLowerCase()}`,
     productName: `SQL Server ${vm.sql} License`,
     serviceName: 'SQL Server',
-    unitPrice: costPerPack,
-    quantity: billablePacks,
+    unitPrice: ratePerVcpuMonth,
+    quantity: billableVcpu,
     lineTotal,
     vmName: vm.name,
     vmId: vm.id,
-    meterName: `SQL ${vm.sql} (${billablePacks}x 2-core pack${billablePacks > 1 ? 's' : ''}, ${billableVcpu} vCPU billed)`,
-    unitOfMeasure: '1 Pack/Month',
+    meterName: `SQL ${vm.sql} (${billableVcpu} vCPU${billableVcpu > resolvedVcpu ? ' billed, ' + resolvedVcpu + ' actual' : ''})`,
+    unitOfMeasure: '1 vCPU/Month',
   }];
 }
 
