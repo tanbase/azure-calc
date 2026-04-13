@@ -186,20 +186,11 @@ export const PasteFromExcel: React.FC<PasteFromExcelProps> = React.memo(({ onPas
     [onPaste],
   );
 
-  // Global paste listener when panel is focused
-  React.useEffect(() => {
-    if (!isFocused) return;
-
-    const handleGlobalPaste = (e: ClipboardEvent) => {
-      // Only handle if not already handled by the panel
-      handlePaste(e);
-    };
-
-    document.addEventListener('paste', handleGlobalPaste);
-    return () => {
-      document.removeEventListener('paste', handleGlobalPaste);
-    };
-  }, [isFocused, handlePaste]);
+  // Container paste event (div has tabIndex=0, receives focus on click)
+  const handleContainerPaste = (e: React.ClipboardEvent) => {
+    e.preventDefault();
+    handlePaste(e.nativeEvent);
+  };
 
   const handleClick = () => {
     setIsFocused(true);
@@ -207,11 +198,6 @@ export const PasteFromExcel: React.FC<PasteFromExcelProps> = React.memo(({ onPas
 
   const handleBlur = () => {
     setIsFocused(false);
-  };
-
-  // Handle container paste event
-  const handleContainerPaste = (e: React.ClipboardEvent) => {
-    handlePaste(e.nativeEvent);
   };
 
   return (
