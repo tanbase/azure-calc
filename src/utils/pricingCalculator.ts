@@ -864,7 +864,7 @@ function calculateBackupCost(
   const vmBackupRecords = pricingData.filter(
     (r) =>
       r.serviceName === 'Backup' &&
-      (r.meterName === 'On Premises Server Protected Instances' || r.meterName === 'Azure VM Protected Instances'),
+      (r.meterName === 'On Premises Server Protected Instance' || r.meterName === 'Azure VM Protected Instance'),
   );
   const protectedInstancePrice = vmBackupRecords.length > 0 ? vmBackupRecords[0].unitPrice : 10.0;
   const protectedInstanceSkuId = vmBackupRecords.length > 0 ? vmBackupRecords[0].skuId : 'backup-vm';
@@ -873,8 +873,7 @@ function calculateBackupCost(
   const storageRateRecords = pricingData.filter(
     (r) =>
       r.serviceName === 'Backup' &&
-      r.skuName === 'Standard' &&
-      r.meterName === 'LRS Data Stored',
+      r.meterName === 'Standard LRS Data Stored',
   );
   const storagePerGB = storageRateRecords.length > 0 ? storageRateRecords[0].unitPrice : 0.0224;
 
@@ -962,8 +961,7 @@ function calculateBackupCost(
     const archiveRateRecords = pricingData.filter(
       (r) =>
         r.serviceName === 'Backup' &&
-        r.skuName === 'Archive' &&
-        r.meterName === 'LRS Data Stored',
+        r.meterName === 'Archive LRS Data Stored',
     );
     const archivePerGB = archiveRateRecords.length > 0 ? archiveRateRecords[0].unitPrice : 0.0013;
     const archiveStorageGB = Math.max(1, Math.round(totalDiskCapacityGB * longTermArchiveRatio));

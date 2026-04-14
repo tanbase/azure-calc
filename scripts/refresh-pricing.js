@@ -206,9 +206,9 @@ async function fetchServicePricing() {
   // protected instances + LRS storage (Standard + Archive tiers)
   console.log('  Fetching Backup pricing...');
   const backupUrl = `${AZURE_PRICING_API}?$filter=serviceName eq 'Backup' and type eq 'Consumption' and `
-    + `(meterName eq 'On Premises Server Protected Instances' or `
-    + `meterName eq 'Azure VM Protected Instances' or `
-    + `(meterName eq 'LRS Data Stored' and (skuName eq 'Standard' or skuName eq 'Archive')))`;
+    + `(meterName eq 'On Premises Server Protected Instance' or `
+    + `meterName eq 'Azure VM Protected Instance' or `
+    + `(meterName eq 'Standard LRS Data Stored' and (skuName eq 'Standard' or skuName eq 'Archive')))`;
   const backupRecords = await fetchPricingWithPagination(backupUrl);
   console.log(`    Got ${backupRecords.length} records`);
   allRecords.push(...backupRecords);
@@ -340,7 +340,7 @@ async function fetchSQLMIPricing() {
     + `productName eq 'SQL Managed Instance General Purpose - Storage' or `
     + `productName eq 'SQL Managed Instance Business Critical - Storage' or `
     + `productName eq 'SQL Managed Instance PITR Backup Storage' or `
-    + `productName eq 'SQL Managed Instance LTR Backup Storage')`;
+    + `productName eq 'SQL Managed Instance - LTR Backup Storage')`;
   const allRecords = await fetchPricingWithPagination(url);
   console.log(`    Got ${allRecords.length} SQL MI records`);
   return allRecords;
@@ -434,7 +434,9 @@ function filterAndOptimizeRecords(records) {
     const reservationTerm = record.reservationTerm || null;
 
     if (!reservationTerm && record.type !== 'Consumption') continue;
-    if (record.tierMinimumUnits !== 0) continue;
+    // Skip volume-pricing tiers (tierMinimumUnits > 0) EXCEPT for Log Analytics,
+    // which uses tierMinimumUnits=5 for its paid ingestion tier (first 5 GB free, then charged)
+    if (record.tierMinimumUnits !== 0 && record.serviceName !== 'Log Analytics') continue;
     if (record.skuName && (record.skuName.includes('Spot') || record.skuName.includes('Low Priority'))) continue;
 
     if (record.serviceName === 'Storage') {
@@ -452,12 +454,12 @@ function filterAndOptimizeRecords(records) {
     // Backup — keep protected instances AND storage rate records
     if (record.serviceName === 'Backup') {
       const isProtectedInstance =
-        record.meterName === 'On Premises Server Protected Instances' ||
-        record.meterName === 'Azure VM Protected Instances';
+        record.meterName === 'On Premises Server Protected Instance' ||
+        record.meterName === 'Azure VM Protected Instance';
       const isStorageRate =
-        record.skuName === 'Standard' && record.meterName === 'LRS Data Stored';
+        record.meterName === 'Standard LRS Data Stored';
       const isArchiveRate =
-        record.skuName === 'Archive' && record.meterName === 'LRS Data Stored';
+        record.meterName === 'Archive LRS Data Stored';
       if (!isProtectedInstance && !isStorageRate && !isArchiveRate) continue;
     }
 
