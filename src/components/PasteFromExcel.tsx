@@ -57,7 +57,7 @@ function parseClipboardData(text: string): ParsedRow[] {
   if (hasHeader) {
     const headers = lines[0].split(delimiter).map(h => h.trim().toLowerCase());
     colMap = {};
-    headers.forEach((h, i) => { colMap[h] = i; });
+    headers.forEach((h, i) => { colMap![h] = i; });
   }
 
   return dataLines.map((line) => {
@@ -66,9 +66,10 @@ function parseClipboardData(text: string): ParsedRow[] {
 
     if (colMap) {
       // Header-based parsing (CSV export format)
+      const cm = colMap;
       const get = (names: string[]) => {
         for (const name of names) {
-          const idx = colMap![name];
+          const idx = cm[name];
           if (idx !== undefined && cells[idx]) return cells[idx];
         }
         return undefined;
