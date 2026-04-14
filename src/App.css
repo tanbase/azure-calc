@@ -702,7 +702,8 @@ body {
   border-spacing: 0;
   table-layout: fixed;
   font-size: 13px;
-  width: max-content;
+  width: 100%;
+  min-width: max-content;
 }
 
 /* Column widths */
@@ -722,7 +723,7 @@ body {
 .vm-table .col-vm-sku     { width: 80px; }
 .vm-table .col-disk-sku   { width: 80px; }
 .vm-table .col-monthly-cost { width: 110px; }
-.vm-table .col-actions    { width: 35px; }
+.vm-table .col-actions    { width: auto; }
 
 /* Alignment */
 .vm-table .col-row-num      { text-align: center; }
@@ -953,8 +954,9 @@ body {
 }
 
 .col-actions {
-  width: 45px;
-  text-align: center;
+  width: auto;
+  text-align: left;
+  padding-left: 16px;
 }
 
 .delete-btn {
@@ -969,7 +971,6 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  margin: 0 auto;
   transition: all 0.15s;
 }
 
