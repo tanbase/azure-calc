@@ -1169,17 +1169,22 @@ export function calculateAllVMs(
   pricingData: OptimizedPricingRecord[],
   azureHybridBenefitWindows: boolean = false,
   azureHybridBenefitSQL: boolean = false,
-): { allLineItems: SKULineItem[]; totalMonthlyCost: number } {
+): { allLineItems: SKULineItem[]; totalMonthlyCost: number; vmSkus: Map<string, { sku: string; diskSku: string }> } {
   const allLineItems: SKULineItem[] = [];
   let totalMonthlyCost = 0;
+  const vmSkus = new Map<string, { sku: string; diskSku: string }>();
 
   for (const vm of vms) {
     const result = calculateVMCost(vm, pricingData, azureHybridBenefitWindows, azureHybridBenefitSQL);
     allLineItems.push(...result.lineItems);
     totalMonthlyCost += result.totalMonthlyCost;
+    vmSkus.set(vm.id, {
+      sku: result.selectedVMSKU || '-',
+      diskSku: result.selectedDiskSKU || '-',
+    });
   }
 
-  return { allLineItems, totalMonthlyCost: Math.round(totalMonthlyCost * 100) / 100 };
+  return { allLineItems, totalMonthlyCost: Math.round(totalMonthlyCost * 100) / 100, vmSkus };
 }
 
 // ============================================================

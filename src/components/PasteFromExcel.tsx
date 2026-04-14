@@ -3,7 +3,7 @@
 // ============================================================
 
 import React from 'react';
-import type { VMEntry, OSOption, BackupOption, SQLOption } from '../types';
+import type { VMEntry, OSOption, BackupOption, SQLOption, DiskType } from '../types';
 import { createVM } from '../utils/helpers';
 
 interface PasteFromExcelProps {
@@ -15,6 +15,7 @@ type ParsedRow = {
   vcpu?: number;
   memoryGB?: number;
   diskGB?: number;
+  diskType?: string;
   os?: string;
   backup?: string;
   sql?: string;
@@ -24,7 +25,10 @@ type ParsedRow = {
 
 /**
  * Parse TSV or CSV data into an array of row objects.
- * Excel copies data as TSV (tab-separated), CSV is comma-separated.
+ * Supports two formats:
+ * 1. Simple positional: VM Name, vCPU, RAM (GB), Disk (GB), OS, Backup, SQL, Monitoring, ASR
+ * 2. CSV export format (with header): detects columns by header names, ignores
+ *    VM Family, VM SKU, Disk SKU, Pricing Model, Monthly Cost
  */
 function parseClipboardData(text: string): ParsedRow[] {
   // Detect delimiter: tab for Excel, comma for CSV
@@ -48,20 +52,54 @@ function parseClipboardData(text: string): ParsedRow[] {
 
   const dataLines = hasHeader ? lines.slice(1) : lines;
 
+  // If header exists, build a column index map for flexible parsing
+  let colMap: Record<string, number> | null = null;
+  if (hasHeader) {
+    const headers = lines[0].split(delimiter).map(h => h.trim().toLowerCase());
+    colMap = {};
+    headers.forEach((h, i) => { colMap[h] = i; });
+  }
+
   return dataLines.map((line) => {
     const cells = line.split(delimiter).map((c) => c.trim());
     const row: ParsedRow = {};
 
-    // Expected columns: VM Name, vCPU, RAM (GB), Disk (GB), OS, Backup, SQL, Monitoring, ASR
-    row.vmName = cells[0] || undefined;
-    row.vcpu = cells[1] ? parseFloat(cells[1]) || undefined : undefined;
-    row.memoryGB = cells[2] ? parseFloat(cells[2]) || undefined : undefined;
-    row.diskGB = cells[3] ? parseFloat(cells[3]) || undefined : undefined;
-    row.os = cells[4] || undefined;
-    row.backup = cells[5] || undefined;
-    row.sql = cells[6] || undefined;
-    row.monitoring = cells[7] || undefined;
-    row.asr = cells[8] || undefined;
+    if (colMap) {
+      // Header-based parsing (CSV export format)
+      const get = (names: string[]) => {
+        for (const name of names) {
+          const idx = colMap![name];
+          if (idx !== undefined && cells[idx]) return cells[idx];
+        }
+        return undefined;
+      };
+      const getNum = (names: string[]) => {
+        const val = get(names);
+        return val ? parseFloat(val) || undefined : undefined;
+      };
+
+      row.vmName = get(['vm name', 'name']);
+      row.vcpu = getNum(['vcpu', 'v cpu', 'cpus']);
+      row.memoryGB = getNum(['memory gb', 'memory', 'ram (gb)', 'ram']);
+      row.diskGB = getNum(['disk size gb', 'disk (gb)', 'disk size', 'disk']);
+      row.diskType = get(['disk type']);
+      row.os = get(['os', 'operating system']);
+      row.sql = get(['sql', 'sql server', 'sql / role']);
+      row.backup = get(['backup']);
+      row.monitoring = get(['monitoring', 'monitor']);
+      row.asr = get(['asr (replication)', 'asr', 'site recovery']);
+    } else {
+      // Positional parsing (simple format)
+      row.vmName = cells[0] || undefined;
+      row.vcpu = cells[1] ? parseFloat(cells[1]) || undefined : undefined;
+      row.memoryGB = cells[2] ? parseFloat(cells[2]) || undefined : undefined;
+      row.diskGB = cells[3] ? parseFloat(cells[3]) || undefined : undefined;
+      row.os = cells[4] || undefined;
+      row.backup = cells[5] || undefined;
+      row.sql = cells[6] || undefined;
+      row.monitoring = cells[7] || undefined;
+      row.asr = cells[8] || undefined;
+    }
 
     return row;
   });
@@ -111,6 +149,17 @@ function parseBool(raw?: string): boolean {
   return lower === 'true' || lower === 'yes' || lower === '1' || lower === 'y';
 }
 
+function matchDiskType(raw?: string): DiskType {
+  if (!raw) return 'Premium SSD';
+  const lower = raw.toLowerCase();
+  if (lower.includes('premium')) return 'Premium SSD';
+  if (lower.includes('standard') && lower.includes('ssd')) return 'Standard SSD';
+  if (lower.includes('standard') && lower.includes('hdd')) return 'Standard HDD';
+  if (lower.includes('hdd')) return 'Standard HDD';
+  if (lower.includes('ssd')) return 'Standard SSD';
+  return 'Premium SSD';
+}
+
 /**
  * Convert parsed rows to VMEntry objects.
  */
@@ -122,6 +171,7 @@ function rowsToVMs(rows: ParsedRow[]): VMEntry[] {
         vcpu: row.vcpu ?? 0,
         memoryGB: row.memoryGB ?? 0,
         diskSizeGB: row.diskGB ?? 0,
+        diskType: matchDiskType(row.diskType),
         os: matchOS(row.os),
         backup: matchBackup(row.backup),
         sql: matchSQL(row.sql),
@@ -233,8 +283,8 @@ export const PasteFromExcel: React.FC<PasteFromExcelProps> = React.memo(({ onPas
           <h3>Paste from Excel or CSV</h3>
           <p>
             Click here and press{' '}
-            <kbd className="paste-kbd">Ctrl+V</kbd> to paste your VM list. Expected columns:{' '}
-            <strong>VM Name, vCPU, RAM (GB), Disk (GB), OS, Backup, SQL, Monitoring, ASR</strong>
+            <kbd className="paste-kbd">Ctrl+V</kbd> to paste your VM list. Supports both simple format (9 columns)
+            and exported CSV format (auto-detects columns by header).
           </p>
         </div>
 
