@@ -217,12 +217,20 @@ async function detectFromIP(): Promise<GeolocationResult> {
   const data = await response.json();
   const { latitude, longitude, country_code } = data;
 
-  // Use lat/long to find the geographically closest Azure region
+  // For Australia, IP geolocation often resolves Melbourne IPs to Sydney.
+  // Use latitude threshold instead, which is more reliable.
+  if (country_code === 'AU' && latitude != null) {
+    const region = latitude < -36 ? 'australiasoutheast' : 'australiaeast';
+    const currency = 'AUD';
+    return { region, currency };
+  }
+
+  // For all other countries, use Haversine distance to find closest region
   const region = (latitude != null && longitude != null)
     ? findClosestRegion(latitude, longitude)
     : 'eastus';
 
-  // Currency is still based on country code (not affected by location within country)
+  // Currency is based on country code (not affected by location within country)
   const currency = COUNTRY_TO_CURRENCY[country_code] || 'USD';
 
   return { region, currency };
