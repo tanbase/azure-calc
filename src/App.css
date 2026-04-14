@@ -155,8 +155,13 @@ body {
 }
 
 .app-content {
+  max-width: 1800px;
+  margin-left: auto;
+  margin-right: auto;
   padding-top: 16px;
   padding-bottom: 24px;
+  padding-left: 24px;
+  padding-right: 24px;
 }
 
 .settings-panel-card {
