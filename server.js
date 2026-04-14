@@ -10,8 +10,9 @@ import { fileURLToPath } from 'url';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const REFRESH_TOKEN = process.env.REFRESH_TOKEN || 'change-me-in-production';
+const REFRESH_TOKEN = process.env.REFRESH_TOKEN;
 
+// If no token is configured, disable the refresh endpoint entirely
 const refreshLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
@@ -19,6 +20,9 @@ const refreshLimiter = rateLimit({
 });
 
 app.get('/refresh', refreshLimiter, async (req, res) => {
+  if (!REFRESH_TOKEN) {
+    return res.status(503).json({ status: 'error', message: 'Refresh endpoint disabled. Set REFRESH_TOKEN env var to enable.' });
+  }
   const { token } = req.query;
   if (token !== REFRESH_TOKEN) {
     return res.status(401).json({ status: 'error', message: 'Invalid token' });

@@ -240,30 +240,26 @@ const App: React.FC = () => {
 
         <VMTable vms={vms} onVMsChange={setVms} currencySymbol={currencySymbol} rate={rate} onClearAll={handleClearAll} />
 
-        <React.Suspense fallback={<div className="summary-cards" />}>
-          <React.Suspense fallback={<LazyErrorFallback />}>
-            <SummaryCards
-              totalMonthlyCost={totalMonthlyCost * rate}
-              threeYearRIMonthly={threeYearRIMonthly}
-              totalVMs={vms.filter((vm) => vm.vcpu > 0 && vm.memoryGB > 0).length}
-              totalVcpu={totalVcpu}
-              totalMemoryGB={totalMemoryGB}
-              totalDiskGB={totalDiskGB}
-              breakdown={convertedBreakdown}
-              currencySymbol={currencySymbol}
-            />
-          </React.Suspense>
+        <React.Suspense fallback={<LazyErrorFallback />}>
+          <SummaryCards
+            totalMonthlyCost={totalMonthlyCost * rate}
+            threeYearRIMonthly={threeYearRIMonthly}
+            totalVMs={vms.filter((vm) => vm.vcpu > 0 && vm.memoryGB > 0).length}
+            totalVcpu={totalVcpu}
+            totalMemoryGB={totalMemoryGB}
+            totalDiskGB={totalDiskGB}
+            breakdown={convertedBreakdown}
+            currencySymbol={currencySymbol}
+          />
         </React.Suspense>
 
         {allLineItems.length > 0 && (
-          <React.Suspense fallback={null}>
-            <React.Suspense fallback={<LazyErrorFallback />}>
-              <SKUBreakdown
-                lineItems={convertedLineItems}
-                vms={vms}
-                currencySymbol={currencySymbol}
-              />
-            </React.Suspense>
+          <React.Suspense fallback={<LazyErrorFallback />}>
+            <SKUBreakdown
+              lineItems={convertedLineItems}
+              vms={vms}
+              currencySymbol={currencySymbol}
+            />
           </React.Suspense>
         )}
 

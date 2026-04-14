@@ -121,7 +121,15 @@ async function fetchPricingWithPagination(url) {
   const allRecords = [];
   while (url) {
     const data = await fetchPricingPage(url);
-    const records = data.Items || [];
+    // Validate response shape
+    if (!data || typeof data !== 'object') {
+      throw new Error(`Invalid API response (not an object): ${url}`);
+    }
+    if (!Array.isArray(data.Items)) {
+      console.warn(`  ⚠️  API response missing Items array: ${url}`);
+      break;
+    }
+    const records = data.Items;
     allRecords.push(...records);
     url = data.NextPageLink || null;
     if (url) {
@@ -436,7 +444,7 @@ function filterAndOptimizeRecords(records) {
     if (!reservationTerm && record.type !== 'Consumption') continue;
     // Skip volume-pricing tiers (tierMinimumUnits > 0) EXCEPT for Log Analytics,
     // which uses tierMinimumUnits=5 for its paid ingestion tier (first 5 GB free, then charged)
-    if (record.tierMinimumUnits !== 0 && record.serviceName !== 'Log Analytics') continue;
+    if ((record.tierMinimumUnits ?? 0) > 0 && record.serviceName !== 'Log Analytics') continue;
     if (record.skuName && (record.skuName.includes('Spot') || record.skuName.includes('Low Priority'))) continue;
 
     if (record.serviceName === 'Storage') {
