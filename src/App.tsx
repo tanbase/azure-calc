@@ -12,7 +12,7 @@ import { VMTable } from './components/VMTable';
 import { Footer } from './components/Footer';
 import { calculateAllVMs, getCostBreakdown, type CostBreakdown } from './utils/pricingCalculator';
 import { CURRENCIES, VM_SKUS } from './utils/constants';
-import { LOCALE_TO_REGION } from './types';
+import { detectDefaultRegion, detectDefaultCurrency } from './utils/geolocation';
 import { createVM } from './utils/helpers';
 import { findClosestDiskSKU, findClosestVMSize } from './utils/vmMapper';
 import './App.css';
@@ -150,18 +150,12 @@ const App: React.FC = () => {
        costBreakdown.osLicensing) * rate
     : 0;
 
-  const handleReset = React.useCallback(() => {
-    // Auto-detect region and currency with fallbacks
-    const locale = navigator.language || 'en-US';
-    const defaultRegion = LOCALE_TO_REGION[locale] || 'eastus';
-    const currencyMap: Record<string, string> = {
-      'en-AU': 'AUD', 'en-US': 'USD', 'en-GB': 'GBP',
-      'de-DE': 'EUR', 'fr-FR': 'EUR', 'es-ES': 'EUR',
-      'it-IT': 'EUR', 'nl-NL': 'EUR', 'pt-BR': 'BRL',
-      'zh-CN': 'CNY', 'zh-TW': 'TWD', 'ja-JP': 'JPY',
-      'ko-KR': 'KRW', 'hi-IN': 'INR',
-    };
-    const defaultCurrency = currencyMap[locale] || 'USD';
+  const handleReset = React.useCallback(async () => {
+    // Auto-detect region and currency from IP geolocation (async, cached in sessionStorage)
+    const [defaultRegion, defaultCurrency] = await Promise.all([
+      detectDefaultRegion(),
+      detectDefaultCurrency(),
+    ]);
 
     setVms(createDefaultVMs());
     setSettings({

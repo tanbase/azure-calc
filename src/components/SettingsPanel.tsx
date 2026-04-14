@@ -5,7 +5,7 @@
 import React from 'react';
 import type { AppSettings } from '../types';
 import { AZURE_REGIONS, CURRENCIES } from '../utils/constants';
-import { LOCALE_TO_REGION } from '../types';
+import { detectDefaultRegion, detectDefaultCurrency } from '../utils/geolocation';
 import { CustomDropdown, type DropdownOption } from './CustomDropdown';
 
 // Help link URLs for Azure Hybrid Benefit
@@ -15,33 +15,6 @@ const AHB_SQL_HELP_LINK = 'https://learn.microsoft.com/en-us/azure/azure-sql/azu
 interface SettingsPanelProps {
   settings: AppSettings;
   onSettingsChange: (settings: AppSettings) => void;
-}
-
-function detectDefaultRegion(): string {
-  const locale = navigator.language || 'en-US';
-  return LOCALE_TO_REGION[locale] || 'eastus';
-}
-
-function detectDefaultCurrency(): string {
-  const locale = navigator.language || 'en-US';
-  const currencyMap: Record<string, string> = {
-    'en-AU': 'AUD',
-    'en-US': 'USD',
-    'en-GB': 'GBP',
-    'en-CA': 'CAD',
-    'en-IN': 'INR',
-    'ja-JP': 'JPY',
-    'ko-KR': 'KRW',
-    'de-DE': 'EUR',
-    'fr-FR': 'EUR',
-    'es-ES': 'EUR',
-    'it-IT': 'EUR',
-    'nl-NL': 'EUR',
-    'pt-BR': 'BRL',
-    'zh-CN': 'CNY',
-    'zh-TW': 'TWD',
-  };
-  return currencyMap[locale] || 'USD';
 }
 
 const regionOptions: DropdownOption[] = AZURE_REGIONS.map((r) => ({
@@ -61,11 +34,14 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = React.memo(({
 }) => {
   React.useEffect(() => {
     if (!settings.region) {
-      onSettingsChange({
-        region: detectDefaultRegion(),
-        currency: detectDefaultCurrency(),
-        azureHybridBenefitWindows: false,
-        azureHybridBenefitSQL: false,
+      // Detect region and currency from IP geolocation (async, cached in sessionStorage)
+      Promise.all([detectDefaultRegion(), detectDefaultCurrency()]).then(([region, currency]) => {
+        onSettingsChange({
+          region,
+          currency,
+          azureHybridBenefitWindows: false,
+          azureHybridBenefitSQL: false,
+        });
       });
     }
   }, []);
