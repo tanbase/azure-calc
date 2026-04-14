@@ -18,6 +18,11 @@ const __dirname = path.dirname(__filename);
 
 const AZURE_PRICING_API = 'https://prices.azure.com/api/retail/prices';
 const FETCH_TIMEOUT_MS = 30000;
+const API_CALL_DELAY_MS = 500; // delay between top-level API calls to avoid 429 rate limits
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 const VM_SKU_NAMES = [
   // B-series
@@ -120,7 +125,7 @@ async function fetchPricingWithPagination(url) {
     allRecords.push(...records);
     url = data.NextPageLink || null;
     if (url) {
-      await new Promise(resolve => setTimeout(resolve, 200));
+      await new Promise(resolve => setTimeout(resolve, 500));
     }
   }
   return allRecords;
@@ -197,21 +202,28 @@ async function fetchDiskPricing() {
 async function fetchServicePricing() {
   const allRecords = [];
 
+  // Backup — only fetch the specific meters we store:
+  // protected instances + LRS storage (Standard + Archive tiers)
   console.log('  Fetching Backup pricing...');
-  const backupUrl = `${AZURE_PRICING_API}?$filter=serviceName eq 'Backup' and type eq 'Consumption'`;
+  const backupUrl = `${AZURE_PRICING_API}?$filter=serviceName eq 'Backup' and type eq 'Consumption' and `
+    + `(meterName eq 'On Premises Server Protected Instances' or `
+    + `meterName eq 'Azure VM Protected Instances' or `
+    + `(meterName eq 'LRS Data Stored' and (skuName eq 'Standard' or skuName eq 'Archive')))`;
   const backupRecords = await fetchPricingWithPagination(backupUrl);
   console.log(`    Got ${backupRecords.length} records`);
   allRecords.push(...backupRecords);
 
+  // Azure Monitor — only Basic Logs ingestion (we don't use any other meter)
   console.log('  Fetching Azure Monitor pricing...');
-  const monitorUrl = `${AZURE_PRICING_API}?$filter=serviceName eq 'Azure Monitor' and type eq 'Consumption'`;
+  const monitorUrl = `${AZURE_PRICING_API}?$filter=serviceName eq 'Azure Monitor' and type eq 'Consumption' and meterName eq 'Basic Logs Data Ingestion'`;
   const monitorRecords = await fetchPricingWithPagination(monitorUrl);
   console.log(`    Got ${monitorRecords.length} records`);
   allRecords.push(...monitorRecords);
 
-  // Log Analytics - Analytics Logs ingestion + retention for SQL MI monitoring
+  // Log Analytics — only Analytics Logs ingestion + retention (for SQL MI monitoring)
   console.log('  Fetching Log Analytics pricing...');
-  const logAnalyticsUrl = `${AZURE_PRICING_API}?$filter=serviceName eq 'Log Analytics' and type eq 'Consumption'`;
+  const logAnalyticsUrl = `${AZURE_PRICING_API}?$filter=serviceName eq 'Log Analytics' and type eq 'Consumption' and `
+    + `(meterName eq 'Analytics Logs Data Ingestion' or meterName eq 'Analytics Logs Data Retention')`;
   const logAnalyticsRecords = await fetchPricingWithPagination(logAnalyticsUrl);
   console.log(`    Got ${logAnalyticsRecords.length} records`);
   allRecords.push(...logAnalyticsRecords);
@@ -320,7 +332,15 @@ async function fetchLicensingPricing() {
 
 async function fetchSQLMIPricing() {
   console.log('  Fetching SQL Managed Instance pricing...');
-  const url = `${AZURE_PRICING_API}?$filter=serviceName eq 'SQL Managed Instance' and type eq 'Consumption'`;
+  // Only fetch the 6 product types we actually store:
+  // GP/BC Gen5 Compute + GP/BC Storage + PITR/LTR Backup LRS
+  const url = `${AZURE_PRICING_API}?$filter=serviceName eq 'SQL Managed Instance' and type eq 'Consumption' and `
+    + `(productName eq 'SQL Managed Instance General Purpose - Compute Gen5' or `
+    + `productName eq 'SQL Managed Instance Business Critical - Compute Gen5' or `
+    + `productName eq 'SQL Managed Instance General Purpose - Storage' or `
+    + `productName eq 'SQL Managed Instance Business Critical - Storage' or `
+    + `productName eq 'SQL Managed Instance PITR Backup Storage' or `
+    + `productName eq 'SQL Managed Instance LTR Backup Storage')`;
   const allRecords = await fetchPricingWithPagination(url);
   console.log(`    Got ${allRecords.length} SQL MI records`);
   return allRecords;
@@ -508,15 +528,21 @@ async function refreshPricing() {
   const vmRecords = await fetchVMPricing();
   console.log(`  ✅ VM pricing: ${vmRecords.length} records\n`);
 
+  await sleep(API_CALL_DELAY_MS);
+
   // 2. Fetch disk pricing
   console.log('📡 Fetching disk pricing...');
   const diskRecords = await fetchDiskPricing();
   console.log(`  ✅ Disk pricing: ${diskRecords.length} records\n`);
 
+  await sleep(API_CALL_DELAY_MS);
+
   // 3. Fetch service pricing
   console.log('📡 Fetching service pricing...');
   const serviceRecords = await fetchServicePricing();
   console.log(`  ✅ Service pricing: ${serviceRecords.length} records\n`);
+
+  await sleep(API_CALL_DELAY_MS);
 
   // 4. Fetch SQL Managed Instance pricing
   console.log('📡 Fetching SQL Managed Instance pricing...');
@@ -524,6 +550,8 @@ async function refreshPricing() {
   console.log(`  ✅ SQL MI pricing: ${sqlMIRecords.length} raw records`);
   const sqlMIOptimized = filterAndOptimizeSQLMIRecords(sqlMIRecords);
   console.log(`  ✅ SQL MI pricing: ${sqlMIOptimized.length} optimized records\n`);
+
+  await sleep(API_CALL_DELAY_MS);
 
   // 5. Fetch SQL Server + OS licensing pricing
   console.log('📡 Fetching SQL Server + OS licensing...');
