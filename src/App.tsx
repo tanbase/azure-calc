@@ -13,6 +13,7 @@ import { Footer } from './components/Footer';
 import { calculateAllVMs, getCostBreakdown, type CostBreakdown } from './utils/pricingCalculator';
 import { CURRENCIES, VM_SKUS } from './utils/constants';
 import { detectDefaultRegion, detectDefaultCurrency } from './utils/geolocation';
+import { encodeState, decodeState } from './utils/shareableLink';
 import { createVM } from './utils/helpers';
 import { findClosestDiskSKU, findClosestVMSize } from './utils/vmMapper';
 import './App.css';
@@ -66,6 +67,7 @@ const App: React.FC = () => {
   const [allLineItems, setAllLineItems] = React.useState<SKULineItem[]>([]);
   const [costBreakdown, setCostBreakdown] = React.useState<CostBreakdown | null>(null);
   const [totalMonthlyCost, setTotalMonthlyCost] = React.useState(0);
+  const [shareCopied, setShareCopied] = React.useState(false);
 
   const { pricingData, isLoading, lastUpdated, fetchPricing, exchangeRates, error } = usePricing();
 
@@ -121,6 +123,34 @@ const App: React.FC = () => {
     }));
   }, [vms, pricingData, settings.azureHybridBenefitWindows, settings.azureHybridBenefitSQL]);
 
+  // Read shared configuration from URL hash on mount
+  React.useEffect(() => {
+    const hash = window.location.hash;
+    if (!hash.startsWith('#config=')) return;
+    const encoded = hash.slice(8);
+    const decoded = decodeState(encoded);
+    if (!decoded) {
+      // Invalid hash — clear it silently
+      window.history.replaceState(null, '', window.location.pathname);
+      return;
+    }
+    // Restore state from shared link
+    setVms(decoded.vms);
+    setSettings(decoded.settings);
+    // Clear hash after restoring (keeps URL clean, state is in React)
+    window.history.replaceState(null, '', window.location.pathname);
+  }, []);
+
+  // Update URL hash when configuration changes (throttled to avoid excessive history entries)
+  React.useEffect(() => {
+    if (vms.length === 0) return;
+    const timer = setTimeout(() => {
+      const encoded = encodeState(vms, settings);
+      window.history.replaceState(null, '', `#config=${encoded}`);
+    }, 1000); // 1 second debounce
+    return () => clearTimeout(timer);
+  }, [vms, settings]);
+
   const currencyCode = settings.currency || 'USD';
   const currencySymbol = CURRENCIES.find((c) => c.code === currencyCode)?.symbol || '$';
   const rate = exchangeRates[currencyCode] || 1.0;
@@ -167,11 +197,27 @@ const App: React.FC = () => {
     setAllLineItems([]);
     setCostBreakdown(null);
     setTotalMonthlyCost(0);
+    // Clear any shared URL hash
+    window.history.replaceState(null, '', window.location.pathname);
   }, []);
 
   const handleClearAll = React.useCallback(() => {
     setVms([]);
+    window.history.replaceState(null, '', window.location.pathname);
   }, []);
+
+  const handleShare = React.useCallback(async () => {
+    const encoded = encodeState(vms, settings);
+    const shareUrl = `${window.location.origin}${window.location.pathname}#config=${encoded}`;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 2500);
+    } catch {
+      // Fallback: select the URL text for manual copy
+      window.prompt('Copy this link to share your configuration:', shareUrl);
+    }
+  }, [vms, settings]);
 
   const handlePasteFromExcel = React.useCallback((pastedVms: VMEntry[]) => {
     setVms((prev) => [...prev, ...pastedVms]);
@@ -205,7 +251,7 @@ const App: React.FC = () => {
 
   return (
     <div className="app-container">
-      <AppHeader vms={vms} lineItems={allLineItems} onReset={handleReset} />
+      <AppHeader vms={vms} lineItems={allLineItems} onReset={handleReset} onShare={handleShare} shareCopied={shareCopied} />
       <div className="app-content">
         <SettingsPanel
           settings={settings}

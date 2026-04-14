@@ -142,6 +142,12 @@ body {
   border-color: #CBD5E1;
 }
 
+.header-btn-success {
+  background: #059669;
+  color: #FFFFFF;
+  border: 1px solid #059669;
+}
+
 .header-btn-primary {
   background: var(--muted);
   color: var(--foreground);

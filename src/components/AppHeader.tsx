@@ -10,9 +10,11 @@ interface AppHeaderProps {
   vms: VMEntry[];
   lineItems: SKULineItem[];
   onReset: () => void;
+  onShare: () => void;
+  shareCopied: boolean;
 }
 
-export const AppHeader: React.FC<AppHeaderProps> = React.memo(({ vms, lineItems, onReset }) => {
+export const AppHeader: React.FC<AppHeaderProps> = React.memo(({ vms, lineItems, onReset, onShare, shareCopied }) => {
   const handleExportVMTable = () => {
     const csv = exportVMTableToCSV(vms);
     downloadCSV(csv, 'vm-table-export.csv');
@@ -49,6 +51,20 @@ export const AppHeader: React.FC<AppHeaderProps> = React.memo(({ vms, lineItems,
             />
           </svg>
           Reset
+        </button>
+        <button
+          className={`header-btn ${shareCopied ? 'header-btn-success' : 'header-btn-secondary'}`}
+          onClick={onShare}
+          disabled={vms.length === 0}
+          title="Copy a shareable link to your current configuration"
+        >
+          <svg viewBox="0 0 24 24" width="18" height="18">
+            <path
+              fill="currentColor"
+              d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"
+            />
+          </svg>
+          {shareCopied ? 'Link Copied!' : 'Share'}
         </button>
         <button
           className="header-btn header-btn-primary"
