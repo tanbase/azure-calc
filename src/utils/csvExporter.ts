@@ -52,27 +52,25 @@ export function exportVMTableToCSV(vms: VMEntry[]): string {
  */
 export function exportSKUToCSV(lineItems: SKULineItem[]): string {
   const headers: (keyof SKUExportRow)[] = [
-    'SKU ID',
-    'Product Name',
+    'VM Name',
     'Service',
+    'Meter Name',
+    'Product Name',
+    'Unit of Measure',
     'Unit Price',
     'Quantity',
     'Line Total',
-    'VM Name',
-    'Meter Name',
-    'Unit of Measure',
   ];
 
   const rows = lineItems.map((item) => ({
-    'SKU ID': item.skuId,
-    'Product Name': item.productName,
+    'VM Name': item.vmName,
     Service: item.serviceName,
+    'Meter Name': item.meterName,
+    'Product Name': item.productName,
+    'Unit of Measure': item.unitOfMeasure,
     'Unit Price': item.unitPrice,
     Quantity: item.quantity,
     'Line Total': item.lineTotal,
-    'VM Name': item.vmName,
-    'Meter Name': item.meterName,
-    'Unit of Measure': item.unitOfMeasure,
   }));
 
   return buildCSV(headers, rows);
@@ -87,10 +85,10 @@ function buildCSV<T extends Record<string, unknown>>(
 ): string {
   const escape = (value: unknown): string => {
     const str = String(value ?? '');
-    // CSV injection prevention: prefix values that start with formula characters
-    // Excel/Google Sheets will execute formulas starting with =, +, -, @
-    const needsFormulaPrefix = str.startsWith('=') || str.startsWith('+') || str.startsWith('-') || str.startsWith('@');
-    const safeStr = needsFormulaPrefix ? `'${str}` : str;
+    // CSV injection prevention: prefix values that look like formulas
+    // (=, +, -, @ followed by additional characters). Skip single '-' which is a common placeholder.
+    const looksLikeFormula = str.length > 1 && (str.startsWith('=') || str.startsWith('+') || str.startsWith('-') || str.startsWith('@'));
+    const safeStr = looksLikeFormula ? `'${str}` : str;
     if (safeStr.includes(',') || safeStr.includes('"') || safeStr.includes('\n')) {
       return `"${safeStr.replace(/"/g, '""')}"`;
     }

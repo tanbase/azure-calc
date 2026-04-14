@@ -148,15 +148,14 @@ export interface VMExportRow {
 }
 
 export interface SKUExportRow {
-  'SKU ID': string;
-  'Product Name': string;
+  'VM Name': string;
   Service: string;
+  'Meter Name': string;
+  'Product Name': string;
+  'Unit of Measure': string;
   'Unit Price': number;
   Quantity: number;
   'Line Total': number;
-  'VM Name': string;
-  'Meter Name': string;
-  'Unit of Measure': string;
 }
 
 // --- Locale detection ---
