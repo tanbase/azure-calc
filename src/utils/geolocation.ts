@@ -1,8 +1,8 @@
 // ============================================================
 // Azure VM Pricing Calculator - IP-based Geolocation
 // Uses ipapi.co to detect user's actual geographic location
-// and maps it to the closest Azure region and currency.
-// Falls back to browser locale detection if IP geolocation fails.
+// and maps to the closest Azure region via lat/long distance.
+// Falls back to browser locale detection if geolocation fails.
 // Results are cached in sessionStorage for the session lifetime.
 // ============================================================
 
@@ -13,54 +13,40 @@ interface GeolocationResult {
   currency: string;
 }
 
-// Map ISO 3166-1 alpha-2 country codes to closest Azure region
-// Only includes regions that exist in COMMERCIAL_REGIONS (scripts/refresh-pricing.js)
-const COUNTRY_TO_REGION: Record<string, string> = {
-  // Australia
-  AU: 'australiaeast',
-  // Americas
-  US: 'eastus',
-  CA: 'canadacentral',
-  BR: 'brazilsouth',
-  MX: 'eastus',
+// Azure region coordinates (lat, lng) for all commercial regions.
+// Sources: Azure region pages + city coordinates.
+// Only includes regions in COMMERCIAL_REGIONS (scripts/refresh-pricing.js).
+const AZURE_REGION_COORDS: Record<string, [number, number]> = {
+  // Australia (all regions)
+  'australiaeast': [-33.8688, 151.2093],    // Sydney
+  'australiasoutheast': [-37.8136, 144.9631], // Melbourne
+  'australiacentral': [-35.2809, 149.1300],   // Canberra
+  'australiacentral2': [-35.2809, 149.1300],  // Canberra
+  // Global / US
+  'eastus': [37.3719, -79.8164],    // Virginia
+  'eastus2': [36.6681, -78.3889],   // Virginia
+  'westus2': [47.6062, -122.3321],  // Seattle
+  'westus3': [33.4484, -112.0740],  // Phoenix
+  'centralus': [41.8781, -93.0977], // Iowa
   // Europe
-  GB: 'uksouth',
-  DE: 'westeurope',
-  FR: 'francecentral',
-  ES: 'westeurope',
-  IT: 'westeurope',
-  NL: 'westeurope',
-  IE: 'northeurope',
-  SE: 'northeurope',
-  NO: 'northeurope',
-  DK: 'northeurope',
-  FI: 'northeurope',
-  PL: 'northeurope',
-  CH: 'westeurope',
-  AT: 'westeurope',
-  BE: 'westeurope',
-  PT: 'westeurope',
+  'northeurope': [53.3498, -6.2603], // Dublin
+  'westeurope': [52.3676, 4.9041],   // Amsterdam
+  'uksouth': [51.5074, -0.1278],     // London
+  'francecentral': [48.8566, 2.3522], // Paris
   // Asia Pacific
-  JP: 'japaneast',
-  KR: 'koreacentral',
-  IN: 'centralindia',
-  SG: 'southeastasia',
-  MY: 'southeastasia',
-  TH: 'southeastasia',
-  VN: 'southeastasia',
-  PH: 'southeastasia',
-  ID: 'southeastasia',
-  HK: 'eastasia',
-  TW: 'eastasia',
-  CN: 'eastasia',
-  NZ: 'australiaeast',
+  'southeastasia': [1.3521, 103.8198], // Singapore
+  'eastasia': [22.3964, 114.1095],     // Hong Kong
+  'japaneast': [35.6762, 139.6503],    // Tokyo
+  'koreacentral': [37.5665, 126.9780], // Seoul
+  // Americas
+  'canadacentral': [43.6532, -79.3832], // Toronto
+  'brazilsouth': [-23.5505, -46.6333],  // São Paulo
   // Middle East
-  AE: 'uaenorth',
-  QA: 'qatarcentral',
-  SA: 'uaenorth',
-  IL: 'uaenorth',
+  'uaenorth': [25.2048, 55.2708],   // Dubai
+  'qatarcentral': [25.3548, 51.1839], // Doha
   // India
-  // (already covered above)
+  'centralindia': [18.5204, 73.8567],  // Pune
+  'southindia': [13.0827, 80.2707],    // Chennai
 };
 
 // Map country codes to currency codes
@@ -128,6 +114,45 @@ const LOCALE_TO_CURRENCY: Record<string, string> = {
 const STORAGE_KEY = 'azure-calc-geo';
 
 /**
+ * Calculate the great-circle distance between two lat/lng points
+ * using the Haversine formula. Returns distance in kilometers.
+ */
+function haversineDistance(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number,
+): number {
+  const R = 6371; // Earth's radius in km
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+/**
+ * Find the closest Azure region to the given latitude/longitude.
+ */
+function findClosestRegion(lat: number, lng: number): string {
+  let closest = 'eastus';
+  let minDist = Infinity;
+
+  for (const [region, [regionLat, regionLng]] of Object.entries(AZURE_REGION_COORDS)) {
+    const dist = haversineDistance(lat, lng, regionLat, regionLng);
+    if (dist < minDist) {
+      minDist = dist;
+      closest = region;
+    }
+  }
+
+  return closest;
+}
+
+/**
  * Detect default region using IP geolocation (async).
  * Falls back to browser locale if geolocation fails.
  * Caches result in sessionStorage.
@@ -179,7 +204,7 @@ export async function detectDefaultCurrency(): Promise<string> {
 }
 
 /**
- * Fetch geolocation from ipapi.co and map to Azure region/currency.
+ * Fetch geolocation from ipapi.co and find the closest Azure region.
  * Throws if the request fails.
  */
 async function detectFromIP(): Promise<GeolocationResult> {
@@ -190,10 +215,15 @@ async function detectFromIP(): Promise<GeolocationResult> {
     throw new Error(`Geolocation API returned ${response.status}`);
   }
   const data = await response.json();
-  const countryCode = data.country_code;
+  const { latitude, longitude, country_code } = data;
 
-  const region = COUNTRY_TO_REGION[countryCode] || 'eastus';
-  const currency = COUNTRY_TO_CURRENCY[countryCode] || 'USD';
+  // Use lat/long to find the geographically closest Azure region
+  const region = (latitude != null && longitude != null)
+    ? findClosestRegion(latitude, longitude)
+    : 'eastus';
+
+  // Currency is still based on country code (not affected by location within country)
+  const currency = COUNTRY_TO_CURRENCY[country_code] || 'USD';
 
   return { region, currency };
 }
