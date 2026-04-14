@@ -38,8 +38,8 @@ export function exportVMTableToCSV(vms: VMEntry[]): string {
     OS: vm.os,
     SQL: vm.sql,
     Backup: vm.backup,
-    Monitoring: vm.monitoring ? 'On' : 'Off',
-    'ASR (Replication)': vm.asr ? 'On' : 'Off',
+    Monitoring: vm.monitoring ? 'Yes' : 'No',
+    'ASR (Replication)': vm.asr ? 'Yes' : 'No',
     'Pricing Model': vm.pricingModel,
     'Monthly Cost': vm.monthlyCost,
   }));

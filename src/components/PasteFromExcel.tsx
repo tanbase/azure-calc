@@ -147,7 +147,7 @@ function matchSQL(raw?: string): SQLOption {
 function parseBool(raw?: string): boolean {
   if (!raw) return false;
   const lower = raw.toLowerCase().trim();
-  return lower === 'true' || lower === 'yes' || lower === '1' || lower === 'y';
+  return lower === 'true' || lower === 'yes' || lower === '1' || lower === 'y' || lower === 'on';
 }
 
 function matchDiskType(raw?: string): DiskType {
