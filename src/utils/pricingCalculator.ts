@@ -252,60 +252,66 @@ function calculateComputeCost(
   // Read OS licensing rates once (before the loop)
   const osRates = getOSLicensingRates(pricingData);
 
-  for (const record of computeRecords) {
-    // Determine if this PAYG meter already includes Windows licensing
-    // (Azure API is inconsistent — some meters have "Windows" in productName, others don't)
-    const isPaygWindowsIncluded = reservationTerm === null && record.productName.includes('Windows');
+  // Only use FIRST matching record (Azure API sometimes returns duplicates)
+  const record = computeRecords[0];
 
-    // Determine effective monthly cost based on reservation type
-    let baseMonthlyCost: number;
-    let effectiveUnitPrice: number;
-    let quantity: number;
+  // Determine if this PAYG meter already includes Windows licensing
+  // (Azure API is inconsistent — some meters have "Windows" in productName, others don't)
+  const isPaygWindowsIncluded = reservationTerm === null && record.productName.includes('Windows');
 
-    if (reservationTerm) {
-      // RI: API price is total upfront for the term, convert to monthly
-      const termMonths: Record<string, number> = { '1 Year': 12, '3 Years': 36 };
-      const months = termMonths[reservationTerm] || 12;
-      baseMonthlyCost = Math.round((record.unitPrice / months) * 100) / 100;
-      effectiveUnitPrice = Math.round((record.unitPrice / (months * hoursPerMonth)) * 10000) / 10000;
-      quantity = hoursPerMonth;
-    } else if (isPaygWindowsIncluded) {
-      // PAYG with Windows included: subtract Windows premium to get VM base
-      // Use the resolved VM SKU's vCPU count, not the user input
+  // Determine effective monthly cost based on reservation type
+  let baseMonthlyCost: number;
+  let effectiveUnitPrice: number;
+  let quantity: number;
+
+  if (reservationTerm) {
+    // RI: API price is total upfront for the term, convert to monthly
+    const termMonths: Record<string, number> = { '1 Year': 12, '3 Years': 36 };
+    const months = termMonths[reservationTerm] || 12;
+    baseMonthlyCost = record.unitPrice / months;
+    effectiveUnitPrice = record.unitPrice / (months * hoursPerMonth);
+    quantity = hoursPerMonth;
+  } else if (isPaygWindowsIncluded) {
+    // PAYG with Windows included: subtract Windows premium to get VM base
+    // Use the resolved VM SKU's vCPU count, not the user input
+    if (!azureHybridBenefitWindows || vm.os !== 'Windows Server') {
       const windowsPremium = osRates.windows * vmSize.vcpu * hoursPerMonth;
-      baseMonthlyCost = Math.round((record.unitPrice * hoursPerMonth - windowsPremium) * 100) / 100;
-      effectiveUnitPrice = Math.round((record.unitPrice - osRates.windows * vmSize.vcpu) * 10000) / 10000;
-      quantity = hoursPerMonth;
+      baseMonthlyCost = record.unitPrice * hoursPerMonth - windowsPremium;
+      effectiveUnitPrice = record.unitPrice - osRates.windows * vmSize.vcpu;
     } else {
-      // PAYG Linux base: already the VM base rate
-      baseMonthlyCost = Math.round(record.unitPrice * hoursPerMonth * 100) / 100;
+      baseMonthlyCost = record.unitPrice * hoursPerMonth;
       effectiveUnitPrice = record.unitPrice;
-      quantity = hoursPerMonth;
     }
+    quantity = hoursPerMonth;
+  } else {
+    // PAYG Linux base: already the VM base rate
+    baseMonthlyCost = record.unitPrice * hoursPerMonth;
+    effectiveUnitPrice = record.unitPrice;
+    quantity = hoursPerMonth;
+  }
 
-    // Build display meter name
-    const planLabel = reservationTerm ? ` (${vm.pricingModel})` : '';
-    const displayMeterName = `${record.meterName}${planLabel} (VM Base)`;
+  // Build display meter name
+  const planLabel = reservationTerm ? ` (${vm.pricingModel})` : '';
+  const displayMeterName = `${record.meterName}${planLabel} (VM Base)`;
 
-    items.push({
-      skuId: `compute-${record.skuId}${reservationTerm ? `-${reservationTerm.replace(/\s/g, '')}` : ''}`,
-      productName: record.productName,
-      serviceName: record.serviceName,
-      unitPrice: effectiveUnitPrice,
-      quantity,
-      lineTotal: baseMonthlyCost,
-      vmName: vm.name,
-      vmId: vm.id,
-      meterName: displayMeterName,
-      unitOfMeasure: reservationTerm ? '1/Month' : record.unitOfMeasure,
-    });
+  items.push({
+    skuId: `compute-${record.skuId}${reservationTerm ? `-${reservationTerm.replace(/\s/g, '')}` : ''}`,
+    productName: record.productName,
+    serviceName: record.serviceName,
+    unitPrice: effectiveUnitPrice,
+    quantity,
+    lineTotal: baseMonthlyCost,
+    vmName: vm.name,
+    vmId: vm.id,
+    meterName: displayMeterName,
+    unitOfMeasure: reservationTerm ? '1/Month' : record.unitOfMeasure,
+  });
 
-    // Step 2: Add separate OS licensing line item (if applicable)
-    // Pass the resolved VM SKU's vCPU count for accurate licensing
-    const osItem = calculateOSLineItem(vm, vmSize.vcpu, azureHybridBenefitWindows, hoursPerMonth, osRates);
-    if (osItem) {
-      items.push(osItem);
-    }
+  // Step 2: Add separate OS licensing line item (if applicable)
+  // Pass the resolved VM SKU's vCPU count for accurate licensing
+  const osItem = calculateOSLineItem(vm, vmSize.vcpu, azureHybridBenefitWindows, hoursPerMonth, osRates);
+  if (osItem) {
+    items.push(osItem);
   }
 
   return { items, selectedVMSKU, resolvedVcpu: vmSize.vcpu };
@@ -458,7 +464,7 @@ function calculateSQLCost(
   const sqlRates = getSQLRatesFromPricingData(pricingData);
   const ratePerVcpuMonth = sqlRates[vm.sql] || 0;
 
-  // Apply minimum 4 vCPU billing
+  // Apply minimum 4 vCPU billing only when NOT using AHB
   const billableVcpu = Math.max(resolvedVcpu, SQL_MIN_VCPU);
 
   const lineTotal = Math.round(ratePerVcpuMonth * billableVcpu * 100) / 100;

@@ -162,26 +162,17 @@ const App: React.FC = () => {
   const threeYearRIComputeCost = React.useMemo(() => {
     if (!pricingData || vms.length === 0) return 0;
     const riVms = vms.map((vm) => ({ ...vm, pricingModel: '3-year RI (~63% off)' as const }));
-    const { allLineItems: riItems } = calculateAllVMs(
+    const { totalMonthlyCost } = calculateAllVMs(
       riVms,
       pricingData,
       settings.azureHybridBenefitWindows,
       settings.azureHybridBenefitSQL,
     );
-    // Only return the compute portion (storage/backup/etc stay full price)
-    return riItems.filter((i) => i.serviceName === 'Virtual Machines' && !i.skuId.startsWith('os-')).reduce((s, i) => s + i.lineTotal, 0);
+    return totalMonthlyCost;
   }, [vms, pricingData, settings.azureHybridBenefitWindows, settings.azureHybridBenefitSQL]);
 
-  // 3-year RI: only VM compute gets discounted (using actual 3-year RI prices from API)
-  const threeYearRIMonthly = costBreakdown
-    ? (threeYearRIComputeCost +
-       costBreakdown.storage +
-       costBreakdown.backup +
-       costBreakdown.siteRecovery +
-       costBreakdown.monitor +
-       costBreakdown.sql +
-       costBreakdown.osLicensing) * rate
-    : 0;
+  // 3-year RI: use full exact calculation result for perfect matching
+  const threeYearRIMonthly = threeYearRIComputeCost * rate;
 
   const handleReset = React.useCallback(async () => {
     // Auto-detect region and currency from IP geolocation (async, cached in sessionStorage)

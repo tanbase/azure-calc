@@ -145,9 +145,8 @@ function findClosestInList(
     let score = cpuDiff / 96 + memDiff / 672;
 
     if (preferNewer) {
-      if (sku.size.includes('_v5')) score -= 0.003;
-      else if (sku.size.includes('_v3')) score -= 0.002;
-      else if (sku.size.includes('_v2')) score -= 0.001;
+      const gen = generationScore(sku.size);
+      score -= gen * 0.0015;
     }
 
     if (score < bestScore) {
