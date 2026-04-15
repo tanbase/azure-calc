@@ -235,6 +235,21 @@ const App: React.FC = () => {
     [allLineItems, rate],
   );
 
+  const convertedBreakdown = React.useMemo(
+    () => !costBreakdown ? null : rate === 1.0 ? costBreakdown : {
+      compute: costBreakdown.compute * rate,
+      paygCompute: costBreakdown.paygCompute * rate,
+      storage: costBreakdown.storage * rate,
+      backup: costBreakdown.backup * rate,
+      siteRecovery: costBreakdown.siteRecovery * rate,
+      monitor: costBreakdown.monitor * rate,
+      sql: costBreakdown.sql * rate,
+      osLicensing: costBreakdown.osLicensing * rate,
+      total: costBreakdown.total * rate,
+    },
+    [costBreakdown, rate],
+  );
+
   return (
     <div className="app-container">
       <AppHeader 
@@ -248,6 +263,16 @@ const App: React.FC = () => {
         <SettingsPanel
           settings={settings}
           onSettingsChange={setSettings}
+        />
+        <SummaryCards
+          totalMonthlyCost={totalMonthlyCost * rate}
+          threeYearRIMonthly={threeYearRIMonthly * rate}
+          totalVMs={vms.filter((vm) => vm.vcpu > 0 && vm.memoryGB > 0).length}
+          totalVcpu={totalVcpu}
+          totalMemoryGB={totalMemoryGB}
+          totalDiskGB={totalDiskGB}
+          breakdown={convertedBreakdown}
+          currencySymbol={currencySymbol}
         />
 
         {error && (
