@@ -116,14 +116,20 @@ const App: React.FC = () => {
       vmCosts.set(item.vmId, (vmCosts.get(item.vmId) || 0) + item.lineTotal);
     }
     // Update VMs with new costs and SKUs (only if values actually changed to avoid loops)
-    setVms((prev) => prev.map((vm) => {
-      const newCost = Math.round((vmCosts.get(vm.id) || 0) * 100) / 100;
-      const skuInfo = vmSkus.get(vm.id);
-      const newSku = skuInfo?.sku || '-';
-      const newDiskSku = skuInfo?.diskSku || '-';
-      if (vm.monthlyCost === newCost && vm.selectedVMSKU === newSku && vm.selectedDiskSKU === newDiskSku) return vm;
-      return { ...vm, monthlyCost: newCost, selectedVMSKU: newSku, selectedDiskSKU: newDiskSku };
-    }));
+    setVms((prev) => {
+      const updated = prev.map((vm) => {
+        const newCost = Math.round((vmCosts.get(vm.id) || 0) * 100) / 100;
+        const skuInfo = vmSkus.get(vm.id);
+        const newSku = skuInfo?.sku || '-';
+        const newDiskSku = skuInfo?.diskSku || '-';
+        if (vm.monthlyCost === newCost && vm.selectedVMSKU === newSku && vm.selectedDiskSKU === newDiskSku) return vm;
+        return { ...vm, monthlyCost: newCost, selectedVMSKU: newSku, selectedDiskSKU: newDiskSku };
+      });
+
+      // Deep compare to prevent unnecessary state updates
+      if (JSON.stringify(prev) === JSON.stringify(updated)) return prev;
+      return updated;
+    });
   }, [vms, pricingData, settings.azureHybridBenefitWindows, settings.azureHybridBenefitSQL]);
 
   // Read shared configuration from URL hash on mount
