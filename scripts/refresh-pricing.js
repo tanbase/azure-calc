@@ -64,8 +64,6 @@ const HARDCODED_PRICING = {
   osLicensing: {
     windowsServer: 0.046,   // per vCPU per hour (Azure Retail API: Virtual Machines Licenses)
     rhel: 0.0108,           // per vCPU per hour (Azure Retail API: Virtual Machines Licenses)
-    // SUSE is free like other Linux distros on Azure — no OS licensing surcharge
-    // (SUSE support subscriptions are optional add-ons, not mandatory licensing)
     suse: 0,
   },
   asr: {
@@ -80,22 +78,12 @@ const DEFAULT_EXCHANGE_RATES = {
   JPY: 150.0, KRW: 1320.0, INR: 83.0, BRL: 4.97, CNY: 7.24, TWD: 31.5,
 };
 
-// Filter to popular commercial + Australia/APAC regions
 const COMMERCIAL_REGIONS = new Set([
-  // Australia (all regions)
   'australiaeast', 'australiasoutheast', 'australiacentral', 'australiacentral2',
-  // Global / US
   'eastus', 'eastus2', 'westus2', 'westus3', 'centralus',
-  // Europe
   'northeurope', 'westeurope', 'uksouth', 'francecentral',
-  // Asia Pacific
-  'southeastasia', 'eastasia', 'japaneast',
-  'koreacentral',
-  // Americas
-  'canadacentral', 'brazilsouth',
-  // Middle East
-  'uaenorth', 'qatarcentral',
-  // India
+  'southeastasia', 'eastasia', 'japaneast', 'koreacentral',
+  'canadacentral', 'brazilsouth', 'uaenorth', 'qatarcentral',
   'centralindia', 'southindia',
 ]);
 
@@ -106,12 +94,23 @@ const COMMERCIAL_REGIONS = new Set([
 async function fetchPricingPage(url) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
   try {
     const response = await fetch(url, { signal: controller.signal });
     if (!response.ok) {
+      if (response.status === 429) {
+        console.warn('  ⚠️  Rate limited (429), waiting 2s...');
+        await sleep(2000);
+        return fetchPricingPage(url);
+      }
       throw new Error(`Azure API returned ${response.status}`);
     }
-    return response.json();
+    return await response.json();
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      throw new Error(`Request timed out after ${FETCH_TIMEOUT_MS}ms`);
+    }
+    throw err;
   } finally {
     clearTimeout(timeoutId);
   }
@@ -121,7 +120,6 @@ async function fetchPricingWithPagination(url) {
   const allRecords = [];
   while (url) {
     const data = await fetchPricingPage(url);
-    // Validate response shape
     if (!data || typeof data !== 'object') {
       throw new Error(`Invalid API response (not an object): ${url}`);
     }
@@ -152,20 +150,23 @@ async function fetchVMPricing() {
     const skuFilter = batch.map(sku => `armSkuName eq '${sku}'`).join(' or ');
 
     // PAYG
-    const paygUrl = `${AZURE_PRICING_API}?$filter=serviceName eq 'Virtual Machines' and (${skuFilter}) and type eq 'Consumption'`;
+    const paygFilter = `serviceName eq 'Virtual Machines' and (${skuFilter}) and type eq 'Consumption'`;
+    const paygUrl = `${AZURE_PRICING_API}?$filter=${encodeURIComponent(paygFilter)}`;
     console.log(`  VM batch ${i + 1}/${totalBatches}: fetching PAYG for ${batch.length} SKUs...`);
     const paygRecords = await fetchPricingWithPagination(paygUrl);
     console.log(`    Got ${paygRecords.length} PAYG records`);
     allRecords.push(...paygRecords);
 
     // 1-year RI
-    const ri1Url = `${AZURE_PRICING_API}?$filter=serviceName eq 'Virtual Machines' and (${skuFilter}) and reservationTerm eq '1 Year'`;
+    const ri1Filter = `serviceName eq 'Virtual Machines' and (${skuFilter}) and reservationTerm eq '1 Year'`;
+    const ri1Url = `${AZURE_PRICING_API}?$filter=${encodeURIComponent(ri1Filter)}`;
     const ri1Records = await fetchPricingWithPagination(ri1Url);
     console.log(`    Got ${ri1Records.length} 1-year RI records`);
     allRecords.push(...ri1Records);
 
     // 3-year RI
-    const ri3Url = `${AZURE_PRICING_API}?$filter=serviceName eq 'Virtual Machines' and (${skuFilter}) and reservationTerm eq '3 Years'`;
+    const ri3Filter = `serviceName eq 'Virtual Machines' and (${skuFilter}) and reservationTerm eq '3 Years'`;
+    const ri3Url = `${AZURE_PRICING_API}?$filter=${encodeURIComponent(ri3Filter)}`;
     const ri3Records = await fetchPricingWithPagination(ri3Url);
     console.log(`    Got ${ri3Records.length} 3-year RI records`);
     allRecords.push(...ri3Records);
@@ -176,7 +177,8 @@ async function fetchVMPricing() {
 
 async function fetchDiskPricing() {
   console.log('  Fetching all Managed Disk pricing...');
-  const url = `${AZURE_PRICING_API}?$filter=serviceName eq 'Storage' and type eq 'Consumption' and (contains(productName, 'Managed Disks'))`;
+  const diskFilter = `serviceName eq 'Storage' and type eq 'Consumption' and (contains(productName, 'Managed Disks')) and unitOfMeasure eq '1/Month'`;
+  const url = `${AZURE_PRICING_API}?$filter=${encodeURIComponent(diskFilter)}`;
   const records = await fetchPricingWithPagination(url);
   console.log(`    Got ${records.length} disk records`);
   return records;
@@ -188,26 +190,29 @@ async function fetchServicePricing() {
   // Backup — only fetch the specific meters we store:
   // protected instances + LRS storage (Standard + Archive tiers)
   console.log('  Fetching Backup pricing...');
-  const backupUrl = `${AZURE_PRICING_API}?$filter=serviceName eq 'Backup' and type eq 'Consumption' and `
+  const backupFilter = `serviceName eq 'Backup' and type eq 'Consumption' and `
     + `(meterName eq 'On Premises Server Protected Instance' or `
     + `meterName eq 'Azure VM Protected Instance' or `
     + `meterName eq 'Standard LRS Data Stored' or `
     + `meterName eq 'Archive LRS Data Stored')`;
+  const backupUrl = `${AZURE_PRICING_API}?$filter=${encodeURIComponent(backupFilter)}`;
   const backupRecords = await fetchPricingWithPagination(backupUrl);
   console.log(`    Got ${backupRecords.length} records`);
   allRecords.push(...backupRecords);
 
   // Azure Monitor — only Basic Logs ingestion (we don't use any other meter)
   console.log('  Fetching Azure Monitor pricing...');
-  const monitorUrl = `${AZURE_PRICING_API}?$filter=serviceName eq 'Azure Monitor' and type eq 'Consumption' and meterName eq 'Basic Logs Data Ingestion'`;
+  const monitorFilter = `serviceName eq 'Azure Monitor' and type eq 'Consumption' and meterName eq 'Basic Logs Data Ingestion'`;
+  const monitorUrl = `${AZURE_PRICING_API}?$filter=${encodeURIComponent(monitorFilter)}`;
   const monitorRecords = await fetchPricingWithPagination(monitorUrl);
   console.log(`    Got ${monitorRecords.length} records`);
   allRecords.push(...monitorRecords);
 
   // Log Analytics — only Analytics Logs ingestion + retention (for SQL MI monitoring)
   console.log('  Fetching Log Analytics pricing...');
-  const logAnalyticsUrl = `${AZURE_PRICING_API}?$filter=serviceName eq 'Log Analytics' and type eq 'Consumption' and `
+  const logAnalyticsFilter = `serviceName eq 'Log Analytics' and type eq 'Consumption' and `
     + `(meterName eq 'Analytics Logs Data Ingestion' or meterName eq 'Analytics Logs Data Retention')`;
+  const logAnalyticsUrl = `${AZURE_PRICING_API}?$filter=${encodeURIComponent(logAnalyticsFilter)}`;
   const logAnalyticsRecords = await fetchPricingWithPagination(logAnalyticsUrl);
   console.log(`    Got ${logAnalyticsRecords.length} records`);
   allRecords.push(...logAnalyticsRecords);
@@ -215,17 +220,10 @@ async function fetchServicePricing() {
   return allRecords;
 }
 
-// ============================================================
-// Fetch SQL Server licensing + OS licensing (Windows, RHEL)
-// from the Virtual Machines Licenses API.
-// Extracts per-vCPU hourly rates for SQL Standard/Enterprise,
-// Windows Server, and Red Hat Enterprise Linux.
-// Falls back to HARDCODED_PRICING values if API data is unavailable.
-// ============================================================
-
 async function fetchLicensingPricing() {
   console.log('  Fetching SQL Server + OS licensing pricing...');
-  const url = `${AZURE_PRICING_API}?$filter=serviceName eq 'Virtual Machines Licenses'`;
+  const licensingFilter = `serviceName eq 'Virtual Machines Licenses'`;
+  const url = `${AZURE_PRICING_API}?$filter=${encodeURIComponent(licensingFilter)}`;
   const allRecords = await fetchPricingWithPagination(url);
   console.log(`    Got ${allRecords.length} VM Licenses records`);
 
@@ -239,55 +237,46 @@ async function fetchLicensingPricing() {
     const meterName = record.meterName || '';
     const price = record.retailPrice || 0;
 
-    // Skip zero-priced records
     if (price <= 0) continue;
 
-    // SQL Server Standard
     if (productName === 'SQL Server Standard' && skuName.includes('vCPU VM') && meterName.includes('vCPU VM License')) {
       const vcpuMatch = skuName.match(/^(\d+)\s+vCPU/);
       if (vcpuMatch) {
         const vcpus = parseInt(vcpuMatch[1], 10);
         const perVcpuHour = price / vcpus;
-        // Accept the first valid rate that isn't an obvious outlier
         if (perVcpuHour > 0.05 && perVcpuHour < 2.0 && sqlLicensing.Standard === null) {
           sqlLicensing.Standard = perVcpuHour;
         }
       }
     }
 
-    // SQL Server Enterprise
     if (productName === 'SQL Server Enterprise' && skuName.includes('vCPU VM') && meterName.includes('vCPU VM License')) {
       const vcpuMatch = skuName.match(/^(\d+)\s+vCPU/);
       if (vcpuMatch) {
         const vcpus = parseInt(vcpuMatch[1], 10);
         const perVcpuHour = price / vcpus;
-        // Accept the first valid rate that isn't an obvious outlier
         if (perVcpuHour > 0.10 && perVcpuHour < 5.0 && sqlLicensing.Enterprise === null) {
           sqlLicensing.Enterprise = perVcpuHour;
         }
       }
     }
 
-    // Windows Server (standalone license)
     if (productName === 'Windows Server' && skuName.includes('vCPU VM') && meterName.includes('vCPU VM License')) {
       const vcpuMatch = skuName.match(/^(\d+)\s+vCPU/);
       if (vcpuMatch) {
         const vcpus = parseInt(vcpuMatch[1], 10);
         const perVcpuHour = price / vcpus;
-        // Accept the first valid rate (typically ~$0.046)
         if (perVcpuHour > 0.01 && perVcpuHour < 1.0 && windowsRate === null) {
           windowsRate = perVcpuHour;
         }
       }
     }
 
-    // Red Hat Enterprise Linux
     if (productName === 'Red Hat Enterprise Linux' && skuName.includes('vCPU VM') && meterName.includes('vCPU VM License')) {
       const vcpuMatch = skuName.match(/^(\d+)\s+vCPU/);
       if (vcpuMatch) {
         const vcpus = parseInt(vcpuMatch[1], 10);
         const perVcpuHour = price / vcpus;
-        // Accept the first valid rate (typically ~$0.0108)
         if (perVcpuHour > 0.005 && perVcpuHour < 1.0 && rhelRate === null) {
           rhelRate = perVcpuHour;
         }
@@ -295,7 +284,6 @@ async function fetchLicensingPricing() {
     }
   }
 
-  // Fall back to hardcoded values if API didn't return data
   const result = {
     sqlStandard: sqlLicensing.Standard ?? HARDCODED_PRICING.sqlServer.Standard,
     sqlEnterprise: sqlLicensing.Enterprise ?? HARDCODED_PRICING.sqlServer.Enterprise,
@@ -309,38 +297,23 @@ async function fetchLicensingPricing() {
   return result;
 }
 
-// ============================================================
-// Fetch SQL Managed Instance pricing from Azure Retail API.
-// SQL MI uses per-vCore hourly pricing (not bundle SKUs like VMs).
-// Fetches General Purpose Gen5 and Business Critical Gen5 compute + storage.
-// ============================================================
-
 async function fetchSQLMIPricing() {
   console.log('  Fetching SQL Managed Instance pricing...');
-  // Only fetch the 6 product types we actually store:
-  // GP/BC Gen5 Compute + GP/BC Storage + PITR/LTR Backup LRS
-  const url = `${AZURE_PRICING_API}?$filter=serviceName eq 'SQL Managed Instance' and type eq 'Consumption' and `
+  const sqlmiFilter = `serviceName eq 'SQL Managed Instance' and type eq 'Consumption' and `
     + `(productName eq 'SQL Managed Instance General Purpose - Compute Gen5' or `
     + `productName eq 'SQL Managed Instance Business Critical - Compute Gen5' or `
     + `productName eq 'SQL Managed Instance General Purpose - Storage' or `
     + `productName eq 'SQL Managed Instance Business Critical - Storage' or `
     + `productName eq 'SQL Managed Instance PITR Backup Storage' or `
     + `productName eq 'SQL Managed Instance - LTR Backup Storage')`;
+  const url = `${AZURE_PRICING_API}?$filter=${encodeURIComponent(sqlmiFilter)}`;
   const allRecords = await fetchPricingWithPagination(url);
   console.log(`    Got ${allRecords.length} SQL MI records`);
   return allRecords;
 }
 
 // ============================================================
-// Filter SQL MI records into the OptimizedPricingRecord format.
-// We keep:
-// - GP Gen5 Compute: meterName='vCore', skuName='1 vCore' → per-vCore/hr
-// - BC Gen5 Compute: meterName='vCore', skuName='1 vCore' → per-vCore/hr
-// - GP Storage: meterName='General Purpose Data Stored' → per GB/mo
-// - BC Storage: meterName='Business Critical Data Stored' → per GB/mo
-// - PITR Backup (LRS): productName includes 'PITR Backup', meterName='LRS Data Stored'
-// - LTR Backup (LRS): productName includes 'LTR Backup', meterName='LTR Backup LRS Data Stored'
-// We normalize productName to simple labels for easy lookup.
+// Filter/Optimize logic
 // ============================================================
 
 function filterAndOptimizeSQLMIRecords(records) {
@@ -420,10 +393,7 @@ function filterAndOptimizeRecords(records) {
     const reservationTerm = record.reservationTerm || null;
 
     if (!reservationTerm && record.type !== 'Consumption') continue;
-    // Skip volume-pricing tiers (tierMinimumUnits > 0) EXCEPT for:
-    // 1. Log Analytics (ingestion tiering)
-    // 2. Backup (storage tiering)
-    // This allows the frontend to handle "First X units free" scenarios.
+    
     const isTieredService = record.serviceName === 'Log Analytics' || record.serviceName === 'Backup';
     if ((record.tierMinimumUnits ?? 0) > 0 && !isTieredService) continue;
     
@@ -431,37 +401,29 @@ function filterAndOptimizeRecords(records) {
 
     if (record.serviceName === 'Storage') {
       const isManagedDisk = record.productName.includes('Managed Disks');
-      // Only keep the main storage meter (e.g., "P30 LRS Disk"), 
-      // excluding "Disk Mount" or "Disk Operations"
       const isBaseStorageMeter = /^[PES]\d+ (LRS|ZRS) Disk$/.test(record.meterName || '');
       const isMonthly = record.unitOfMeasure === '1/Month';
-      
       if (!isManagedDisk || !isBaseStorageMeter || !isMonthly) continue;
     }
 
     const startDate = new Date(record.effectiveStartDate);
     if (startDate > new Date()) continue;
 
-    // Azure Monitor — keep only Basic Logs
     if (record.serviceName === 'Azure Monitor') {
       if (record.meterName !== 'Basic Logs Data Ingestion') continue;
     }
 
-    // Backup — keep protected instances AND storage rate records
     if (record.serviceName === 'Backup') {
       const isProtectedInstance =
         record.meterName === 'On Premises Server Protected Instance' ||
         record.meterName === 'Azure VM Protected Instance';
-      const isStorageRate =
-        record.meterName === 'Standard LRS Data Stored';
-      const isArchiveRate =
-        record.meterName === 'Archive LRS Data Stored';
+      const isStorageRate = record.meterName === 'Standard LRS Data Stored';
+      const isArchiveRate = record.meterName === 'Archive LRS Data Stored';
       if (!isProtectedInstance && !isStorageRate && !isArchiveRate) continue;
     }
 
-    // Log Analytics — keep Analytics Logs ingestion and retention
     if (record.serviceName === 'Log Analytics') {
-      const isIngestion = record.meterName === 'Analytics Logs Data Ingestion' && record.retailPrice > 0;
+      const isIngestion = record.meterName === 'Analytics Logs Data Ingestion' && (record.retailPrice > 0 || record.tierMinimumUnits === 5);
       const isRetention = record.meterName === 'Analytics Logs Data Retention';
       if (!isIngestion && !isRetention) continue;
     }
@@ -475,7 +437,7 @@ function filterAndOptimizeRecords(records) {
       unitOfMeasure: record.unitOfMeasure,
       unitPrice: record.retailPrice,
       reservationTerm,
-      skuName: record.skuName || '', // needed to distinguish Backup storage tiers
+      skuName: record.skuName || '',
       armSkuName: record.armSkuName || '',
       tierMinimumUnits: record.tierMinimumUnits ?? 0,
     };
@@ -490,10 +452,6 @@ function filterAndOptimizeRecords(records) {
   return optimized;
 }
 
-// ============================================================
-// Fetch exchange rates
-// ============================================================
-
 async function fetchExchangeRates() {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -507,7 +465,6 @@ async function fetchExchangeRates() {
     return data.rates;
   } catch (error) {
     console.error('❌ Failed to fetch exchange rates:', error.message);
-    console.log('⚠️  Using default fallback exchange rates');
     return DEFAULT_EXCHANGE_RATES;
   } finally {
     clearTimeout(timeoutId);
@@ -522,55 +479,30 @@ async function refreshPricing() {
   const startTime = Date.now();
   console.log('🚀 Starting Azure pricing data refresh...\n');
 
-  // 1. Fetch VM pricing
-  console.log('📡 Fetching VM pricing (47 SKUs)...');
   const vmRecords = await fetchVMPricing();
-  console.log(`  ✅ VM pricing: ${vmRecords.length} records\n`);
-
   await sleep(API_CALL_DELAY_MS);
 
-  // 2. Fetch disk pricing
-  console.log('📡 Fetching disk pricing...');
   const diskRecords = await fetchDiskPricing();
-  console.log(`  ✅ Disk pricing: ${diskRecords.length} records\n`);
-
   await sleep(API_CALL_DELAY_MS);
 
-  // 3. Fetch service pricing
-  console.log('📡 Fetching service pricing...');
   const serviceRecords = await fetchServicePricing();
-  console.log(`  ✅ Service pricing: ${serviceRecords.length} records\n`);
-
   await sleep(API_CALL_DELAY_MS);
 
-  // 4. Fetch SQL Managed Instance pricing
-  console.log('📡 Fetching SQL Managed Instance pricing...');
   const sqlMIRecords = await fetchSQLMIPricing();
-  console.log(`  ✅ SQL MI pricing: ${sqlMIRecords.length} raw records`);
   const sqlMIOptimized = filterAndOptimizeSQLMIRecords(sqlMIRecords);
-  console.log(`  ✅ SQL MI pricing: ${sqlMIOptimized.length} optimized records\n`);
-
   await sleep(API_CALL_DELAY_MS);
 
-  // 5. Fetch SQL Server + OS licensing pricing
-  console.log('📡 Fetching SQL Server + OS licensing...');
   const licensing = await fetchLicensingPricing();
-  console.log('');
-
-  // 6. Fetch exchange rates
   const exchangeRates = await fetchExchangeRates();
 
-  // 7. Combine and filter VM/disk/service records
   const allRecords = [...vmRecords, ...diskRecords, ...serviceRecords];
   console.log(`\n📊 Processing ${allRecords.length} raw records...`);
   const optimized = filterAndOptimizeRecords(allRecords);
   console.log(`✨ Optimized to ${optimized.length} records`);
 
-  // 7. Add SQL Server + OS licensing pricing (from API or fallback)
   const licensingRecords = [];
   const regions = [...new Set(optimized.map(r => r.region))];
   for (const region of regions) {
-    // SQL Server licensing
     licensingRecords.push({
       skuId: 'sql-server-standard',
       productName: 'SQL Server Standard',
@@ -607,8 +539,6 @@ async function refreshPricing() {
       skuName: 'SQL Server Developer',
       armSkuName: 'SQL Server Developer',
     });
-
-    // OS Licensing
     licensingRecords.push({
       skuId: 'os-windows-server',
       productName: 'Windows Server License',
@@ -647,7 +577,6 @@ async function refreshPricing() {
     });
   }
 
-  // 8. Add ASR pricing records (still hardcoded)
   const asrRecords = [];
   for (const region of regions) {
     asrRecords.push({
@@ -679,67 +608,36 @@ async function refreshPricing() {
   const allOptimized = [...optimized, ...licensingRecords, ...asrRecords, ...sqlMIOptimized];
   console.log(`✨ With SQL MI + SQL + OS + ASR pricing: ${allOptimized.length} records`);
 
-  // 9. Group by region and filter to commercial regions
   const allRegions = {};
   for (const record of allOptimized) {
-    if (!allRegions[record.region]) {
-      allRegions[record.region] = [];
-    }
+    if (!allRegions[record.region]) allRegions[record.region] = [];
     allRegions[record.region].push(record);
   }
 
   const byRegion = {};
   for (const [region, data] of Object.entries(allRegions)) {
-    if (COMMERCIAL_REGIONS.has(region)) {
-      byRegion[region] = data;
-    }
+    if (COMMERCIAL_REGIONS.has(region)) byRegion[region] = data;
   }
 
   const totalRegions = Object.keys(byRegion).length;
   console.log(`\n🌍 Filtered to ${totalRegions} commercial regions`);
 
-  // 10. Write per-region JSON files + index
-  const publicDir = path.join(__dirname, '..', 'public');
-  const pricingDir = path.join(publicDir, 'pricing');
+  const pricingDir = path.join(__dirname, '..', 'public', 'pricing');
+  if (!fs.existsSync(pricingDir)) fs.mkdirSync(pricingDir, { recursive: true });
 
-  // Ensure pricing directory exists
-  if (!fs.existsSync(pricingDir)) {
-    fs.mkdirSync(pricingDir, { recursive: true });
-  }
+  const indexOutput = { exchangeRates, lastUpdated: new Date().toISOString(), regions: Object.keys(byRegion) };
+  fs.writeFileSync(path.join(pricingDir, 'index.json'), JSON.stringify(indexOutput));
 
-  // Write index file with exchange rates and region list
-  const indexOutput = {
-    exchangeRates,
-    lastUpdated: new Date().toISOString(),
-    regions: Object.keys(byRegion),
-  };
-  const indexPath = path.join(pricingDir, 'index.json');
-  fs.writeFileSync(path.join(pricingDir, 'index.json.tmp'), JSON.stringify(indexOutput));
-  fs.renameSync(path.join(pricingDir, 'index.json.tmp'), indexPath);
-
-  // Write individual region files
   let totalRecords = 0;
   for (const [region, data] of Object.entries(byRegion)) {
-    const regionOutput = {
-      region,
-      records: data,
-      lastUpdated: new Date().toISOString(),
-    };
-    const regionPath = path.join(pricingDir, `${region}.json`);
-    fs.writeFileSync(regionPath + '.tmp', JSON.stringify(regionOutput));
-    fs.renameSync(regionPath + '.tmp', regionPath);
+    fs.writeFileSync(path.join(pricingDir, `${region}.json`), JSON.stringify({ region, records: data, lastUpdated: new Date().toISOString() }));
     totalRecords += data.length;
   }
 
-  const fileSize = fs.statSync(indexPath).size;
-  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-
-  console.log(`\n✅ Pricing refresh complete in ${elapsed}s`);
-  console.log(`   📄 Written: ${pricingDir}/ (${totalRegions} region files, ${(fileSize / 1024).toFixed(0)} KB index)`);
+  console.log(`\n✅ Pricing refresh complete in ${((Date.now() - startTime) / 1000).toFixed(1)}s`);
   console.log(`   📊 ${totalRegions} regions, ${totalRecords} records`);
 }
 
-// Run if called directly
 refreshPricing().catch((err) => {
   console.error('❌ Refresh failed:', err.message);
   process.exit(1);
