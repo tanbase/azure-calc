@@ -41,6 +41,7 @@ export interface OptimizedPricingRecord {
   reservationTerm: string | null; // null = PAYG
   skuName: string; // storage tier identifier (e.g. "Standard", "Archive" for Backup)
   armSkuName: string; // Azure VM SKU name like "D2s_v3"
+  tierMinimumUnits: number; // For tiered pricing models (e.g. first 5GB free)
 }
 
 export interface PricingResponse {

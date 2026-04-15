@@ -216,7 +216,8 @@ async function fetchServicePricing() {
   const backupUrl = `${AZURE_PRICING_API}?$filter=serviceName eq 'Backup' and type eq 'Consumption' and `
     + `(meterName eq 'On Premises Server Protected Instance' or `
     + `meterName eq 'Azure VM Protected Instance' or `
-    + `(meterName eq 'Standard LRS Data Stored' and (skuName eq 'Standard' or skuName eq 'Archive')))`;
+    + `meterName eq 'Standard LRS Data Stored' or `
+    + `meterName eq 'Archive LRS Data Stored')`;
   const backupRecords = await fetchPricingWithPagination(backupUrl);
   console.log(`    Got ${backupRecords.length} records`);
   allRecords.push(...backupRecords);
@@ -272,7 +273,8 @@ async function fetchLicensingPricing() {
       if (vcpuMatch) {
         const vcpus = parseInt(vcpuMatch[1], 10);
         const perVcpuHour = price / vcpus;
-        if (sqlLicensing.Standard === null || Math.abs(perVcpuHour - 0.10) < Math.abs(sqlLicensing.Standard - 0.10)) {
+        // Accept the first valid rate that isn't an obvious outlier
+        if (perVcpuHour > 0.05 && perVcpuHour < 2.0 && sqlLicensing.Standard === null) {
           sqlLicensing.Standard = perVcpuHour;
         }
       }
@@ -284,34 +286,34 @@ async function fetchLicensingPricing() {
       if (vcpuMatch) {
         const vcpus = parseInt(vcpuMatch[1], 10);
         const perVcpuHour = price / vcpus;
-        if (sqlLicensing.Enterprise === null || Math.abs(perVcpuHour - 0.375) < Math.abs(sqlLicensing.Enterprise - 0.375)) {
+        // Accept the first valid rate that isn't an obvious outlier
+        if (perVcpuHour > 0.10 && perVcpuHour < 5.0 && sqlLicensing.Enterprise === null) {
           sqlLicensing.Enterprise = perVcpuHour;
         }
       }
     }
 
     // Windows Server (standalone license)
-    // ProductName exactly "Windows Server", not "Windows Server for Azure Local" etc.
     if (productName === 'Windows Server' && skuName.includes('vCPU VM') && meterName.includes('vCPU VM License')) {
       const vcpuMatch = skuName.match(/^(\d+)\s+vCPU/);
       if (vcpuMatch) {
         const vcpus = parseInt(vcpuMatch[1], 10);
         const perVcpuHour = price / vcpus;
-        // Should be ~$0.046/vCPU/hr
-        if (windowsRate === null || Math.abs(perVcpuHour - 0.046) < Math.abs(windowsRate - 0.046)) {
+        // Accept the first valid rate (typically ~$0.046)
+        if (perVcpuHour > 0.01 && perVcpuHour < 1.0 && windowsRate === null) {
           windowsRate = perVcpuHour;
         }
       }
     }
 
-    // Red Hat Enterprise Linux (standalone license, base — not SAP/HANA variants)
+    // Red Hat Enterprise Linux
     if (productName === 'Red Hat Enterprise Linux' && skuName.includes('vCPU VM') && meterName.includes('vCPU VM License')) {
       const vcpuMatch = skuName.match(/^(\d+)\s+vCPU/);
       if (vcpuMatch) {
         const vcpus = parseInt(vcpuMatch[1], 10);
         const perVcpuHour = price / vcpus;
-        // Should be ~$0.0108/vCPU/hr (skip outlier entries with huge per-vCPU rates)
-        if (perVcpuHour < 1.0 && (rhelRate === null || Math.abs(perVcpuHour - 0.0108) < Math.abs(rhelRate - 0.0108))) {
+        // Accept the first valid rate (typically ~$0.0108)
+        if (perVcpuHour > 0.005 && perVcpuHour < 1.0 && rhelRate === null) {
           rhelRate = perVcpuHour;
         }
       }
@@ -428,6 +430,7 @@ function filterAndOptimizeSQLMIRecords(records) {
       reservationTerm: null,
       skuName: normalizedProductName,
       armSkuName: normalizedProductName,
+      tierMinimumUnits: record.tierMinimumUnits ?? 0,
     });
   }
 
@@ -442,9 +445,13 @@ function filterAndOptimizeRecords(records) {
     const reservationTerm = record.reservationTerm || null;
 
     if (!reservationTerm && record.type !== 'Consumption') continue;
-    // Skip volume-pricing tiers (tierMinimumUnits > 0) EXCEPT for Log Analytics,
-    // which uses tierMinimumUnits=5 for its paid ingestion tier (first 5 GB free, then charged)
-    if ((record.tierMinimumUnits ?? 0) > 0 && record.serviceName !== 'Log Analytics') continue;
+    // Skip volume-pricing tiers (tierMinimumUnits > 0) EXCEPT for:
+    // 1. Log Analytics (ingestion tiering)
+    // 2. Backup (storage tiering)
+    // This allows the frontend to handle "First X units free" scenarios.
+    const isTieredService = record.serviceName === 'Log Analytics' || record.serviceName === 'Backup';
+    if ((record.tierMinimumUnits ?? 0) > 0 && !isTieredService) continue;
+    
     if (record.skuName && (record.skuName.includes('Spot') || record.skuName.includes('Low Priority'))) continue;
 
     if (record.serviceName === 'Storage') {
@@ -489,9 +496,10 @@ function filterAndOptimizeRecords(records) {
       reservationTerm,
       skuName: record.skuName || '', // needed to distinguish Backup storage tiers
       armSkuName: record.armSkuName || '',
+      tierMinimumUnits: record.tierMinimumUnits ?? 0,
     };
 
-    const dedupKey = `${record.skuName}|${record.armRegionName}|${record.meterName}|${reservationTerm || 'PAYG'}`;
+    const dedupKey = `${record.skuName}|${record.armRegionName}|${record.meterName}|${reservationTerm || 'PAYG'}|${record.tierMinimumUnits || 0}`;
     if (seen.has(dedupKey)) continue;
     seen.add(dedupKey);
 

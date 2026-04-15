@@ -272,16 +272,11 @@ function calculateComputeCost(
     effectiveUnitPrice = record.unitPrice / (months * hoursPerMonth);
     quantity = hoursPerMonth;
   } else if (isPaygWindowsIncluded) {
-    // PAYG with Windows included: subtract Windows premium to get VM base
-    // Use the resolved VM SKU's vCPU count, not the user input
-    if (!azureHybridBenefitWindows || vm.os !== 'Windows Server') {
-      const windowsPremium = osRates.windows * vmSize.vcpu * hoursPerMonth;
-      baseMonthlyCost = record.unitPrice * hoursPerMonth - windowsPremium;
-      effectiveUnitPrice = record.unitPrice - osRates.windows * vmSize.vcpu;
-    } else {
-      baseMonthlyCost = record.unitPrice * hoursPerMonth;
-      effectiveUnitPrice = record.unitPrice;
-    }
+    // PAYG with Windows included: ALWAYS subtract Windows premium to get VM base.
+    // The calculateOSLineItem function will add it back if AHB is disabled.
+    const windowsPremium = osRates.windows * vmSize.vcpu * hoursPerMonth;
+    baseMonthlyCost = record.unitPrice * hoursPerMonth - windowsPremium;
+    effectiveUnitPrice = record.unitPrice - osRates.windows * vmSize.vcpu;
     quantity = hoursPerMonth;
   } else {
     // PAYG Linux base: already the VM base rate
@@ -670,13 +665,16 @@ function calculateSQLMIBackupCost(
   const isLongTerm = backupType.includes('Long-term');
 
   // Look up backup rates from pricingData (fetched from Azure Retail API).
-  // Falls back to US East rates if not available in the current region's data.
-  const pitrRecord = pricingData.find(
+  // PITR backup excess is often listed as a tiered record.
+  const pitrRecords = pricingData.filter(
     (r) => r.productName === 'PITR Backup LRS' && r.meterName === 'GB per Month',
   );
-  const ltrRecord = pricingData.find(
+  const ltrRecords = pricingData.filter(
     (r) => r.productName === 'LTR Backup LRS' && r.meterName === 'GB per Month',
   );
+
+  const pitrRecord = pitrRecords.find(r => r.unitPrice > 0) || pitrRecords[0];
+  const ltrRecord = ltrRecords.find(r => r.unitPrice > 0) || ltrRecords[0];
 
   const pitrRatePerGB = pitrRecord ? pitrRecord.unitPrice : 0.10;  // fallback: East US LRS
   const ltrRatePerGB = ltrRecord ? ltrRecord.unitPrice : 0.025;   // fallback: East US LRS
@@ -686,7 +684,7 @@ function calculateSQLMIBackupCost(
   // Azure backup estimated at 1.5× the allocated frontend storage.
   const pitrMultiplier = 1.5;
   const totalBackupGB = Math.round(sqlMIResult.storageGB * pitrMultiplier);
-  const freeBackupGB = sqlMIResult.storageGB; // First 100% is free
+  const freeBackupGB = sqlMIResult.storageGB; // First 100% of DB size is free
   const excessBackupGB = Math.max(0, totalBackupGB - freeBackupGB);
 
   if (excessBackupGB > 0) {
@@ -696,11 +694,24 @@ function calculateSQLMIBackupCost(
       productName: 'SQL MI - Point-in-Time Restore Backup',
       serviceName: 'Backup',
       unitPrice: pitrRatePerGB,
-      quantity: excessBackupGB,
+      quantity: totalBackupGB,
       lineTotal: pitrCost,
       vmName: _vm.name,
       vmId: _vm.id,
-      meterName: `PITR Backup Excess (${excessBackupGB} GB of ${totalBackupGB} GB total)`,
+      meterName: `PITR Backup Excess (${excessBackupGB} GB of ${totalBackupGB} GB total, ${freeBackupGB} GB free)`,
+      unitOfMeasure: 'GB/mth',
+    });
+  } else {
+    items.push({
+      skuId: 'sqlmi-backup-pitr-free',
+      productName: 'SQL MI - Point-in-Time Restore Backup',
+      serviceName: 'Backup',
+      unitPrice: 0,
+      quantity: totalBackupGB,
+      lineTotal: 0,
+      vmName: _vm.name,
+      vmId: _vm.id,
+      meterName: `PITR Backup (Fits in ${freeBackupGB} GB free allowance)`,
       unitOfMeasure: 'GB/mth',
     });
   }
@@ -744,17 +755,22 @@ function calculateSQLMIMonitoringCost(
   const items: SKULineItem[] = [];
 
   // 1. Log ingestion cost: find Analytics Logs Data Ingestion rate from API
-  const ingestionRecord = pricingData.find(
+  const ingestionRecords = pricingData.filter(
     (r) =>
       r.serviceName === 'Log Analytics' &&
-      r.meterName === 'Analytics Logs Data Ingestion' &&
-      r.unitPrice > 0,
+      r.meterName === 'Analytics Logs Data Ingestion',
   );
-  const ingestionRate = ingestionRecord ? ingestionRecord.unitPrice : 2.30; // fallback: East US rate
-  const ingestionCost = Math.round(ingestionRate * SQL_MI_ESTIMATED_LOG_INGESTION_GB * 100) / 100;
+
+  const paidTier = ingestionRecords.find(r => r.unitPrice > 0);
+  const freeTier = ingestionRecords.find(r => r.unitPrice === 0);
+  const freeAllowance = freeTier ? 0 : (paidTier?.tierMinimumUnits ?? 5.0); // usually first 5GB free
+
+  const ingestionRate = paidTier ? paidTier.unitPrice : 2.30; // fallback: East US rate
+  const billableIngestionGB = Math.max(0, SQL_MI_ESTIMATED_LOG_INGESTION_GB - freeAllowance);
+  const ingestionCost = Math.round(ingestionRate * billableIngestionGB * 100) / 100;
 
   items.push({
-    skuId: 'sqlmi-monitoring-ingestion',
+    skuId: `sqlmi-monitoring-ingestion`,
     productName: 'SQL MI Monitoring - Log Analytics Ingestion',
     serviceName: 'Azure Monitor',
     unitPrice: ingestionRate,
@@ -762,7 +778,7 @@ function calculateSQLMIMonitoringCost(
     lineTotal: ingestionCost,
     vmName: _vm.name,
     vmId: _vm.id,
-    meterName: `Analytics Logs Ingestion (${SQL_MI_ESTIMATED_LOG_INGESTION_GB} GB/month est.)`,
+    meterName: `Analytics Logs Ingestion (${SQL_MI_ESTIMATED_LOG_INGESTION_GB} GB/month, ${freeAllowance} GB free allowance)`,
     unitOfMeasure: 'GB/mth',
   });
 
@@ -815,11 +831,14 @@ function calculateDiskCost(
   const tierCapacityGB = diskSKU.capacityGB;
 
   // Calculate how many disks are needed to accommodate the required size
+  // Note: diskSizeGB can be up to 1 PB, while max tier is 32 TB.
   const disksNeeded = Math.max(1, Math.ceil(vm.diskSizeGB / tierCapacityGB));
 
-  // Try API data first, fall back to calculated model
+  // Try API data first (prefer exact match on armSkuName or meterName)
   const matchingRecords = pricingData.filter(
-    (r) => r.serviceName === 'Storage' && r.meterName === diskSKU.meterName,
+    (r) =>
+      r.serviceName === 'Storage' &&
+      (r.armSkuName === diskSKU.armSkuName || r.meterName === diskSKU.meterName),
   );
 
   let unitPrice: number;
@@ -828,7 +847,7 @@ function calculateDiskCost(
     // Use API pricing when available
     unitPrice = matchingRecords[0].unitPrice;
   } else {
-    // Fall back to calculated per-GB rate model
+    // Fall back to calculated per-GB rate model for tiers not in API data
     unitPrice = calculateDiskTierPrice(vm.diskType, tierCapacityGB);
   }
 
@@ -1097,26 +1116,36 @@ function calculateMonitoringCost(
   vm: VMEntry,
   pricingData: OptimizedPricingRecord[],
 ): SKULineItem[] {
+  // 1 GB per month for basic monitoring ingestion
+  const ingestionQuantityGB = 1.0;
+
   const monitorRecords = pricingData.filter(
     (r) =>
       r.serviceName === 'Azure Monitor' &&
       r.meterName === 'Basic Logs Data Ingestion',
   );
 
-  if (monitorRecords.length > 0) {
-    const record = monitorRecords[0];
-    // 1 GB per month for basic monitoring
+  // Note: Retail API for Azure Monitor/Log Analytics typically has a free tier (tierMinimumUnits=0, unitPrice=0)
+  // and a paid tier (tierMinimumUnits=5, unitPrice>0).
+  const paidTier = monitorRecords.find(r => r.unitPrice > 0);
+  const freeTier = monitorRecords.find(r => r.unitPrice === 0);
+  const freeAllowance = freeTier ? 0 : (paidTier?.tierMinimumUnits ?? 5.0); // usually first 5GB free
+
+  if (paidTier) {
+    const billableQuantity = Math.max(0, ingestionQuantityGB - freeAllowance);
+    const lineTotal = Math.round(paidTier.unitPrice * billableQuantity * 100) / 100;
+
     return [{
-      skuId: `monitor-${record.skuId}`,
+      skuId: `monitor-${paidTier.skuId}`,
       productName: 'Azure Monitor - Basic Logs',
       serviceName: 'Azure Monitor',
-      unitPrice: record.unitPrice,
-      quantity: 1,
-      lineTotal: Math.round(record.unitPrice * 100) / 100,
+      unitPrice: paidTier.unitPrice,
+      quantity: ingestionQuantityGB,
+      lineTotal,
       vmName: vm.name,
       vmId: vm.id,
-      meterName: 'Basic Logs Data Ingestion (1 GB)',
-      unitOfMeasure: record.unitOfMeasure,
+      meterName: `Basic Logs Ingestion (1 GB total, ${freeAllowance} GB free allowance)`,
+      unitOfMeasure: paidTier.unitOfMeasure,
     }];
   }
 
@@ -1126,10 +1155,10 @@ function calculateMonitoringCost(
     serviceName: 'Azure Monitor',
     unitPrice: 0.50,
     quantity: 1,
-    lineTotal: 0.50,
+    lineTotal: 0, // Assume fits in free tier by default
     vmName: vm.name,
     vmId: vm.id,
-    meterName: 'Basic Logs (1 GB)',
+    meterName: 'Basic Logs (1 GB, fits in free tier)',
     unitOfMeasure: '1 GB',
   }];
 }
