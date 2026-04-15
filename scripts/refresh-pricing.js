@@ -175,36 +175,11 @@ async function fetchVMPricing() {
 }
 
 async function fetchDiskPricing() {
-  const allRecords = [];
-  const premiumDiskSkus = [];
-  const ssdDiskSkus = [];
-  const hddDiskSkus = [];
-
-  for (const size of ['P1','P2','P3','P4','P6','P10','P15','P20','P30','P40','P50','P60','P70','P80']) {
-    premiumDiskSkus.push(`Premium_SSD_Managed_Disk_${size}`);
-  }
-  for (const size of ['E1','E2','E3','E4','E6','E10','E15','E20','E30','E40','E50','E60','E70','E80']) {
-    ssdDiskSkus.push(`Standard_SSD_Managed_Disk_${size}`);
-  }
-  for (const size of ['S4','S6','S10','S15','S20','S30','S40','S50','S60','S70','S80']) {
-    hddDiskSkus.push(`Standard_HDD_Managed_Disk_${size}`);
-  }
-
-  const allDiskSkus = [...premiumDiskSkus, ...ssdDiskSkus, ...hddDiskSkus];
-  console.log(`  Fetching ${allDiskSkus.length} disk SKUs...`);
-
-  const diskBatches = chunkArray(allDiskSkus, 5);
-  for (let i = 0; i < diskBatches.length; i++) {
-    const batch = diskBatches[i];
-    const skuFilter = batch.map(sku => `armSkuName eq '${sku}'`).join(' or ');
-    const url = `${AZURE_PRICING_API}?$filter=serviceName eq 'Storage' and (${skuFilter}) and type eq 'Consumption'`;
-    console.log(`    Disk batch ${i + 1}/${diskBatches.length}: ${batch.join(', ')}`);
-    const records = await fetchPricingWithPagination(url);
-    console.log(`    Got ${records.length} records`);
-    allRecords.push(...records);
-  }
-
-  return allRecords;
+  console.log('  Fetching all Managed Disk pricing...');
+  const url = `${AZURE_PRICING_API}?$filter=serviceName eq 'Storage' and type eq 'Consumption' and (contains(productName, 'Managed Disks'))`;
+  const records = await fetchPricingWithPagination(url);
+  console.log(`    Got ${records.length} disk records`);
+  return records;
 }
 
 async function fetchServicePricing() {
@@ -455,7 +430,13 @@ function filterAndOptimizeRecords(records) {
     if (record.skuName && (record.skuName.includes('Spot') || record.skuName.includes('Low Priority'))) continue;
 
     if (record.serviceName === 'Storage') {
-      if (!record.meterName || !/^[A-Z]\d+ LRS Disk$/.test(record.meterName)) continue;
+      const isManagedDisk = record.productName.includes('Managed Disks');
+      // Only keep the main storage meter (e.g., "P30 LRS Disk"), 
+      // excluding "Disk Mount" or "Disk Operations"
+      const isBaseStorageMeter = /^[PES]\d+ (LRS|ZRS) Disk$/.test(record.meterName || '');
+      const isMonthly = record.unitOfMeasure === '1/Month';
+      
+      if (!isManagedDisk || !isBaseStorageMeter || !isMonthly) continue;
     }
 
     const startDate = new Date(record.effectiveStartDate);

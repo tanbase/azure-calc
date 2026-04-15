@@ -21,8 +21,8 @@ export const SummaryCards: React.FC<SummaryCardsProps> = React.memo(({
   breakdown, currencySymbol,
 }) => {
   const fmt = (n: number) => {
-    // Use currency code-aware formatting
-    const hasDecimals = !['JPY', 'KRW', 'INR'].includes(currencySymbol);
+    // Use currency symbol-aware formatting
+    const hasDecimals = !['¥', '₩', '₹'].includes(currencySymbol);
     return `${currencySymbol}${n.toLocaleString(undefined, {
       minimumFractionDigits: hasDecimals ? 2 : 0,
       maximumFractionDigits: hasDecimals ? 2 : 0,
