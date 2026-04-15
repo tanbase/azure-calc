@@ -218,7 +218,14 @@ const App: React.FC = () => {
   }, []);
 
   // Memoized derived values to prevent unnecessary re-renders
-  // Skip conversion when rate === 1.0 (USD) to avoid unnecessary object creation
+  const convertedVms = React.useMemo(
+    () => rate === 1.0 ? vms : vms.map(vm => ({
+      ...vm,
+      monthlyCost: Math.round(vm.monthlyCost * rate * 100) / 100,
+    })),
+    [vms, rate]
+  );
+
   const convertedLineItems = React.useMemo(
     () => rate === 1.0 ? allLineItems : allLineItems.map(item => ({
       ...item,
@@ -228,24 +235,15 @@ const App: React.FC = () => {
     [allLineItems, rate],
   );
 
-  const convertedBreakdown = React.useMemo(
-    () => !costBreakdown ? null : rate === 1.0 ? costBreakdown : {
-      compute: costBreakdown.compute * rate,
-      paygCompute: costBreakdown.paygCompute * rate,
-      storage: costBreakdown.storage * rate,
-      backup: costBreakdown.backup * rate,
-      siteRecovery: costBreakdown.siteRecovery * rate,
-      monitor: costBreakdown.monitor * rate,
-      sql: costBreakdown.sql * rate,
-      osLicensing: costBreakdown.osLicensing * rate,
-      total: costBreakdown.total * rate,
-    },
-    [costBreakdown, rate],
-  );
-
   return (
     <div className="app-container">
-      <AppHeader vms={vms} lineItems={allLineItems} onReset={handleReset} onShare={handleShare} shareCopied={shareCopied} />
+      <AppHeader 
+        vms={convertedVms} 
+        lineItems={convertedLineItems} 
+        onReset={handleReset} 
+        onShare={handleShare} 
+        shareCopied={shareCopied} 
+      />
       <div className="app-content">
         <SettingsPanel
           settings={settings}
