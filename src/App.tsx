@@ -264,16 +264,6 @@ const App: React.FC = () => {
           settings={settings}
           onSettingsChange={setSettings}
         />
-        <SummaryCards
-          totalMonthlyCost={totalMonthlyCost * rate}
-          threeYearRIMonthly={threeYearRIMonthly * rate}
-          totalVMs={vms.filter((vm) => vm.vcpu > 0 && vm.memoryGB > 0).length}
-          totalVcpu={totalVcpu}
-          totalMemoryGB={totalMemoryGB}
-          totalDiskGB={totalDiskGB}
-          breakdown={convertedBreakdown}
-          currencySymbol={currencySymbol}
-        />
 
         {error && (
           <div
