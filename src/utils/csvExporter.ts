@@ -2,13 +2,13 @@
 // Azure VM Pricing Calculator - CSV Exporter
 // ============================================================
 
-import type { VMEntry, SKULineItem, VMExportRow, SKUExportRow } from '../types';
+import type { VMEntry, SKULineItem } from '../types';
 
 /**
  * Convert VM entries to CSV string
  */
-export function exportVMTableToCSV(vms: VMEntry[]): string {
-  const headers: (keyof VMExportRow)[] = [
+export function exportVMTableToCSV(vms: VMEntry[], currencyCode: string = 'USD'): string {
+  const headers: string[] = [
     'VM Name',
     'VM Family',
     'vCPU',
@@ -23,7 +23,7 @@ export function exportVMTableToCSV(vms: VMEntry[]): string {
     'Monitoring',
     'ASR (Replication)',
     'Pricing Model',
-    'Monthly Cost',
+    `Monthly Cost ${currencyCode}`,
   ];
 
   const rows = vms.map((vm) => ({
@@ -41,7 +41,7 @@ export function exportVMTableToCSV(vms: VMEntry[]): string {
     Monitoring: vm.monitoring ? 'Yes' : 'No',
     'ASR (Replication)': vm.asr ? 'Yes' : 'No',
     'Pricing Model': vm.pricingModel,
-    'Monthly Cost': vm.monthlyCost,
+    [`Monthly Cost ${currencyCode}`]: vm.monthlyCost,
   }));
 
   return buildCSV(headers, rows);
@@ -50,16 +50,16 @@ export function exportVMTableToCSV(vms: VMEntry[]): string {
 /**
  * Convert SKU line items to CSV string
  */
-export function exportSKUToCSV(lineItems: SKULineItem[]): string {
-  const headers: (keyof SKUExportRow)[] = [
+export function exportSKUToCSV(lineItems: SKULineItem[], currencyCode: string = 'USD'): string {
+  const headers: string[] = [
     'VM Name',
     'Service',
     'Meter Name',
     'Product Name',
     'Unit of Measure',
-    'Unit Price',
+    `Unit Price ${currencyCode}`,
     'Quantity',
-    'Line Total',
+    `Line Total ${currencyCode}`,
   ];
 
   const rows = lineItems.map((item) => ({
@@ -68,9 +68,9 @@ export function exportSKUToCSV(lineItems: SKULineItem[]): string {
     'Meter Name': item.meterName,
     'Product Name': item.productName,
     'Unit of Measure': item.unitOfMeasure,
-    'Unit Price': item.unitPrice,
+    [`Unit Price ${currencyCode}`]: item.unitPrice,
     Quantity: item.quantity,
-    'Line Total': item.lineTotal,
+    [`Line Total ${currencyCode}`]: item.lineTotal,
   }));
 
   return buildCSV(headers, rows);

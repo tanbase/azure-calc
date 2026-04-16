@@ -261,6 +261,7 @@ const App: React.FC = () => {
       <AppHeader 
         vms={convertedVms} 
         lineItems={convertedLineItems} 
+        currencyCode={currencyCode}
         onReset={handleReset} 
         onShare={handleShare} 
         shareCopied={shareCopied} 

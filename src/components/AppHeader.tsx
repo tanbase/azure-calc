@@ -9,19 +9,20 @@ import { exportVMTableToCSV, exportSKUToCSV, downloadCSV } from '../utils/csvExp
 interface AppHeaderProps {
   vms: VMEntry[];
   lineItems: SKULineItem[];
+  currencyCode: string;
   onReset: () => void;
   onShare: () => void;
   shareCopied: boolean;
 }
 
-export const AppHeader: React.FC<AppHeaderProps> = React.memo(({ vms, lineItems, onReset, onShare, shareCopied }) => {
+export const AppHeader: React.FC<AppHeaderProps> = React.memo(({ vms, lineItems, currencyCode, onReset, onShare, shareCopied }) => {
   const handleExportVMTable = () => {
-    const csv = exportVMTableToCSV(vms);
+    const csv = exportVMTableToCSV(vms, currencyCode);
     downloadCSV(csv, 'vm-table-export.csv');
   };
 
   const handleExportSKU = () => {
-    const csv = exportSKUToCSV(lineItems);
+    const csv = exportSKUToCSV(lineItems, currencyCode);
     downloadCSV(csv, 'sku-line-items-export.csv');
   };
 
