@@ -12,11 +12,6 @@ interface PricingIndex {
   regions: string[];
 }
 
-interface CachedRegionData {
-  records: OptimizedPricingRecord[];
-  fetchedAt: number;
-}
-
 interface UsePricingReturn {
   pricingData: OptimizedPricingRecord[] | null;
   isLoading: boolean;
@@ -26,8 +21,6 @@ interface UsePricingReturn {
   error: string | null;
 }
 
-// Cache TTL: 5 minutes (data only changes daily, but short TTL ensures updates after refresh)
-const CACHE_TTL_MS = 5 * 60 * 1000;
 
 export function usePricing(): UsePricingReturn {
   const [pricingData, setPricingData] = useState<OptimizedPricingRecord[] | null>(null);
@@ -37,7 +30,6 @@ export function usePricing(): UsePricingReturn {
   const [error, setError] = useState<string | null>(null);
   const mountedRef = useRef(true);
   const indexRef = useRef<PricingIndex | null>(null);
-  const regionCacheRef = useRef<Map<string, CachedRegionData>>(new Map());
   const currentRegionRef = useRef<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -75,20 +67,12 @@ export function usePricing(): UsePricingReturn {
 
   // Fetch a specific region file on demand (~38KB vs 855KB monolithic)
   const fetchRegion = useCallback(async (region: string, signal?: AbortSignal): Promise<OptimizedPricingRecord[] | null> => {
-    // Check cache with TTL
-    const cached = regionCacheRef.current.get(region);
-    if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
-      return cached.records;
-    }
-
     try {
       const baseUrl = import.meta.env.BASE_URL;
       const res = await fetch(`${baseUrl}pricing/${region}.json`, { signal });
       if (!res.ok) throw new Error(`Failed to load pricing for ${region} (${res.status})`);
       const data = await res.json();
-      const records = data.records || [];
-      regionCacheRef.current.set(region, { records, fetchedAt: Date.now() });
-      return records;
+      return data.records || [];
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') return null;
       const message = err instanceof Error ? err.message : `Failed to load pricing for ${region}`;

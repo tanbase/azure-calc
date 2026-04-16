@@ -4,7 +4,14 @@ import react from '@vitejs/plugin-react'
 // https://vite.dev/config/
 export default defineConfig({
   base: '/azure-calc/',
-  plugins: [react()],
+  plugins: [
+    react()
+  ],
+  esbuild: {
+    drop: ['console', 'debugger'],
+    legalComments: 'none',
+    treeShaking: true,
+  },
   server: {
     host: 'localhost',
     strictPort: true,
@@ -15,12 +22,16 @@ export default defineConfig({
     },
   },
   build: {
-    target: 'es2020',
+    target: 'esnext',
     cssMinify: true,
+    minify: 'esbuild',
+    sourcemap: false,
+    reportCompressedSize: true,
     rollupOptions: {
       output: {
         manualChunks: {
-          vendor: ['react', 'react-dom'],
+          react: ['react'],
+          'react-dom': ['react-dom'],
         },
       },
     },
