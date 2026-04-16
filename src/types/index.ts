@@ -77,6 +77,7 @@ export interface VMEntry {
   vmFamily: VMFamily;
   vcpu: number;
   memoryGB: number;
+  description?: string;
   diskType: DiskType;
   diskSizeGB: number;
   os: OSOption;

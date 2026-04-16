@@ -53,31 +53,14 @@ export const VMRow = React.memo(({
       <td className="col-memory">
         <input type="number" min={0} value={vm.memoryGB} onChange={(e) => updateVM(vm.id, { memoryGB: Math.max(0, parseFloat(e.target.value) || 0) })} />
       </td>
-      <td className="col-description">
-        <span className="description-display">
-          {vm.vcpu > 0 && vm.memoryGB > 0
-            ? vm.description || `${vm.vcpu} vCPU, ${vm.memoryGB} GB RAM`
-            : '-'}
-        </span>
-      </td>
-      <td className="col-disk-size">
-      <td className="col-description">
-        <span className="description-display">
-          {vm.vcpu > 0 && vm.memoryGB > 0
-            ? vm.description || `${vm.vcpu} vCPU, ${vm.memoryGB} GB RAM`
-            : '-'}
-        </span>
-      </td>
-      <td className="col-disk-size">
-      <td className="col-description">
-        <span className="description-display">
-          {vm.vcpu > 0 && vm.memoryGB > 0
-            ? vm.description || `${vm.vcpu} vCPU, ${vm.memoryGB} GB RAM`
-            : '-'}
-        </span>
-      </td>
-      <td className="col-disk-size">
-      <td className="col-disk-size">
+       <td className="col-description">
+         <span className="description-display">
+           {vm.vcpu > 0 && vm.memoryGB > 0
+             ? vm.description || `${vm.vcpu} vCPU, ${vm.memoryGB} GB RAM`
+             : '-'}
+         </span>
+       </td>
+       <td className="col-disk-size">
         <input type="number" min={0} value={vm.diskSizeGB} onChange={(e) => updateVM(vm.id, { diskSizeGB: Math.max(0, parseFloat(e.target.value) || 0) })} />
       </td>
       <td className="col-disk-type">

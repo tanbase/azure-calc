@@ -4,6 +4,7 @@
 
 import React from 'react';
 import type { SKULineItem } from '../types';
+import { VM_SKUS } from '../utils/constants';
 
 interface SKUBreakdownProps {
   lineItems: SKULineItem[];
@@ -135,21 +136,39 @@ export const SKUBreakdown: React.FC<SKUBreakdownProps> = React.memo(({ lineItems
                     aria-expanded={isExpanded}
                   >
                     <td className="col-toggle"><span className="expand-icon">{isExpanded ? '▼' : '▶'}</span></td>
-                    <td className="vm-name-cell">{vm.name}</td>
-                    <td className="vm-summary-service" colSpan={6}>
-                      {(() => {
-                        const svc = items[0].serviceName;
-                        const displaySvc = svc === 'SQL Managed Instance' ? 'SQL Managed Instance' : svc;
-                        return `${displaySvc}${items.length > 1 ? ` (${items.length} SKUs)` : ''}`;
-                      })()}
-                    </td>
+                     <td className="vm-name-cell">{vm.name}</td>
+                     <td className="vm-summary-service" colSpan={6}>
+                       {(() => {
+                         const svc = items[0].serviceName;
+                         const displaySvc = svc === 'SQL Managed Instance' ? 'SQL Managed Instance' : svc;
+                         return `${displaySvc}${items.length > 1 ? ` (${items.length} SKUs)` : ''}`;
+                       })()}
+                     </td>
                     <td className="total-cell subtotal-value">{fmtTotal(vmTotal)}</td>
                   </tr>
                   {isExpanded && items.map((item, idx) => (
-                    <tr key={`${item.skuId}-${idx}`} className="sku-detail-row">
-                      <td className="col-toggle"></td>
-                      <td className="indent-cell"></td>
-                      <td className="sku-name-cell">{item.meterName}</td>
+                     <tr key={`${item.skuId}-${idx}`} className="sku-detail-row">
+                       <td className="col-toggle"></td>
+                       <td className="indent-cell"></td>
+                       <td className="sku-name-cell">
+                         {(() => {
+                           // Add vCPU/memory specs to VM base SKU rows
+                           let displayName = item.meterName;
+                           if (item.meterName.includes('(VM Base)')) {
+                             const skuMatch = item.meterName.match(/^([A-Z]\d+[a-z]?[s]?_?[v]?\d*)\s/);
+                             if (skuMatch) {
+                               const skuSize = skuMatch[1];
+                               const foundSKU = VM_SKUS.find(s => s.size.toLowerCase() === skuSize.toLowerCase() || 
+                                                                  s.size.toLowerCase() === `${skuSize.toLowerCase()}_v5` ||
+                                                                  s.size.toLowerCase() === `${skuSize.toLowerCase()}_v3`);
+                           if (foundSKU) {
+                             displayName = `${item.meterName} (${foundSKU.vcpu} vCPU, ${foundSKU.memoryGB} GB RAM)`;
+                           }
+                             }
+                           }
+                           return displayName;
+                         })()}
+                       </td>
                       <td className="product-cell">{item.productName}</td>
                       <td>{item.serviceName === 'SQL Managed Instance' ? 'SQL Managed Instance' : item.serviceName}</td>
                       <td className="units-cell">{abbreviateUnits(item.unitOfMeasure)}</td>
